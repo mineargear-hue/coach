@@ -215,11 +215,30 @@
       if (!c.length) return null;
       const occ = (seen[pat] || 0) + (w === 2 && i > 0 ? 1 : 0);
       seen[pat] = (seen[pat] || 0) + 1;
-      const x = pickVaried(c, occ);
+      let x = pickVaried(c, occ), stepFrom = null;
+      const easy = stepDown(x, c, w, sp);
+      if (easy) { stepFrom = x.name; x = easy; }
       used.add(x.name);
       const main = i === 0 && pat !== "core";
-      return {name: x.name, pat, sets: setsFor(main, w), reps: repsFor(x.name, main, w), base: restFor(x, main), main, side: x.side, lib: x};
+      return {name: x.name, pat, sets: setsFor(main, w), reps: repsFor(x.name, main, w), base: restFor(x, main), main, side: x.side, lib: x, stepFrom};
     }).filter(Boolean);
+  }
+  // A bodyweight move missed in two sessions in a row steps back to an easier move of the same kind
+  // (push-up → incline push-up) until the easier one is done cleanly twice. A session already started keeps its move.
+  function stepDown(x, c, w, sp) {
+    if (!x.bw) return null;
+    const easy = c.filter(y => y.lvl < x.lvl && y.name !== x.name).sort((a, b) => (b.bw - a.bw) || (b.lvl - a.lvl))[0];
+    if (!easy) return null;
+    const curId = sid(settings.cycle, w, sp.key), body = sessions[curId];
+    if (setsOf(body, x.name).some(s => s && (s.r != null || s.w != null))) return null;
+    if (setsOf(body, easy.name).some(s => s && (s.r != null || s.w != null))) return easy;
+    const work = historyFor(x.name, curId).filter(h => h.week !== 4 && !h.light);
+    if (work.length < 2) return null;
+    const last = work.slice(-2);
+    if (last.some(h => judge(h, x.name).hit)) return null;
+    const since = last[1].date || "";
+    const done = historyFor(easy.name, curId).filter(h => h.week !== 4 && !h.light && (h.date || "") >= since);
+    return done.length >= 2 && done.slice(-2).every(h => judge(h, easy.name).hit) ? null : easy;
   }
 
   // ---------- time budget for one session ----------
@@ -342,7 +361,7 @@
     items.forEach(it => {
       t += it.ramp;
       rows.push({name: it.name, sets: it.sets, reps: it.reps, rest: it.rest, start: t / 60, ramp: it.ramp / 60, main: it.main,
-        jointFrom: it.jointFrom, jointLoad: it.jointLoad, jointWhy: it.jointWhy});
+        stepFrom: it.stepFrom, jointFrom: it.jointFrom, jointLoad: it.jointLoad, jointWhy: it.jointWhy});
       t += it.sets * workSec(it) + (it.sets - 1) * it.rest + CHANGE;
     });
     const end = t / 60, liftEnd = Math.ceil(end);
@@ -377,9 +396,12 @@
     const bn = baseName(name), k = Object.keys(body.sets).find(x => baseName(x) === bn);
     return k ? body.sets[k] : [];
   }
-  function incFor(n) {
+  // Weight to add after a clean session. Big lower-body lifts add about 5% of the weight (at least 5 lb),
+  // so a light squat goes up 5 lb and a heavy one 10–15 lb; everything else adds 5 lb (the smallest dumbbell step).
+  function incFor(n, w) {
     if (/lunge|step-up|split squat|goblet|dumbbell/i.test(n)) return 5;
-    return /squat|deadlift|leg press|hip thrust/i.test(n) ? 10 : 5;
+    if (!/squat|deadlift|leg press|hip thrust/i.test(n)) return 5;
+    return typeof w === "number" && w > 0 ? round5(w * 0.05) : 5;
   }
   function historyFor(name, currentId) {
     const bn = baseName(name), out = [];
@@ -396,9 +418,13 @@
   function judge(h, bn) {
     const p = h.plan || {sets: h.sets.length, reps: 0};
     const ws = h.sets.map(x => x.w).filter(v => typeof v === "number" && v > 0);
-    const usedW = isBW(bn) ? null : typeof p.w === "number" ? p.w : (ws.length ? Math.min(...ws) : null);
+    // The weight they really used counts, not the suggestion: someone who typed 50 when the target said 20 builds from 50.
+    const allWeighed = ws.length && ws.length === h.sets.length;
+    const usedW = isBW(bn) ? null : allWeighed ? Math.min(...ws) : typeof p.w === "number" ? p.w : (ws.length ? Math.min(...ws) : null);
     const hit = h.sets.length >= (p.sets || 1) && h.sets.every(x => (x.r || 0) >= (p.reps || 0) && (usedW == null || (typeof x.w === "number" && x.w >= usedW)));
-    return {usedW, hit, reps: p.reps || 0, sets: p.sets || h.sets.length};
+    const rs = h.sets.map(x => +x.r || 0);
+    return {usedW, hit, reps: p.reps || 0, sets: p.sets || h.sets.length,
+      minR: rs.length ? Math.min(...rs) : 0, avgR: rs.length ? rs.reduce((a, b) => a + b, 0) / rs.length : 0};
   }
   function targetFor(name, repsTxt, wk, currentId) {
     const bn = baseName(name), tReps = parseInt(repsTxt, 10) || 0, timed = /sec/.test(repsTxt);
@@ -411,13 +437,34 @@
     if (!work.length && isBW(bn)) return {w: null, reps: tReps, kind: "new", msg: "First time: do every set with good form, stop 2 reps short of your limit"};
     if (!work.length) return {w: null, reps: tReps, kind: "new", msg: "First time: pick a weight you can lift for every set with 2–3 reps to spare"};
     const a = judge(work[work.length - 1], bn);
+    const unit = timed ? "sec" : "reps";
     if (a.usedW == null) {
-      const prev = Math.max(tReps, a.reps);
-      if (a.hit) { const add = timed ? 5 : 1; return {w: null, reps: prev + add, kind: "up", msg: `You hit every set last time. Add ${add} ${timed ? "sec" : "rep"} per set`}; }
+      const prev = Math.max(tReps, a.reps), cap = timed ? 90 : 20;
+      if (a.hit) {
+        const add = timed ? 5 : 1;
+        if (prev >= cap) return {w: null, reps: cap, kind: "hold", msg: timed ? `Top of the range at ${cap} sec. Keep it here and squeeze harder, or move to a tougher variation` : `Top of the range at ${cap} reps. Make it harder: lower for 3 seconds on every rep`};
+        return {w: null, reps: Math.min(cap, prev + add), kind: "up", msg: `You hit every set last time. Add ${add} ${timed ? "sec" : "rep"} per set`};
+      }
+      // Well short (under 70% of the target on average): meet them where they are and build back up.
+      if (a.reps && a.avgR < a.reps * 0.7) {
+        const r0 = Math.max(timed ? 10 : 3, Math.round(a.avgR));
+        return {w: null, reps: r0, kind: "down", msg: `Last time averaged ${Math.round(a.avgR)} of ${a.reps} ${unit}. Today's target matches that, then it climbs again`};
+      }
       return {w: null, reps: prev, kind: "hold", msg: "Hold here until you finish every set"};
     }
+    // Far more reps than asked on every set: the weight is too light, so jump toward the weight that fits the target
+    // (estimated with the Epley formula), up to +25%, or +50% when every set beat the target by 6 or more.
+    const want = Math.max(tReps, a.reps);
+    if (a.hit && !timed && want && a.minR >= want + 3) {
+      const fitW = round5(a.usedW * (1 + a.minR / 30) / (1 + tReps / 30));
+      const capW = round5(a.usedW * (a.minR >= want + 6 ? 1.5 : 1.25)), inc = incFor(bn, a.usedW);
+      const next = Math.max(a.usedW + inc, Math.min(fitW, capW));
+      if (next > a.usedW + inc) return {w: next, reps: tReps, kind: "up", from: a.usedW, msg: `+${next - a.usedW} lb. You did ${a.minR}+ reps on every set at ${a.usedW} lb, so that was too light`};
+    }
     if (a.hit && a.reps && tReps > a.reps) return {w: a.usedW, reps: tReps, kind: "hold", msg: `Same ${a.usedW} lb: more reps today (${tReps} vs ${a.reps} last time)`};
-    if (a.hit) { const inc = incFor(bn); return {w: a.usedW + inc, reps: tReps, kind: "up", msg: `+${inc} lb. You hit all ${a.sets} sets at ${a.usedW} lb last time`}; }
+    if (a.hit) { const inc = incFor(bn, a.usedW); return {w: a.usedW + inc, reps: tReps, kind: "up", from: a.usedW, msg: `+${inc} lb. You hit all ${a.sets} sets at ${a.usedW} lb last time`}; }
+    // Well short of the reps (under 70% on average): too heavy, so drop 10% now instead of waiting for a second miss.
+    if (a.reps && a.avgR < a.reps * 0.7) return {w: round5(a.usedW * 0.9), reps: tReps, kind: "down", msg: `Last time averaged ${Math.round(a.avgR)} of ${a.reps} reps at ${a.usedW} lb. Drop 10% and build back up`};
     const b = work.length > 1 ? judge(work[work.length - 2], bn) : null;
     if (b && !b.hit && b.usedW === a.usedW) return {w: round5(a.usedW * 0.9), reps: tReps, kind: "down", msg: `Missed at ${a.usedW} lb twice. Drop 10% and build back up`};
     return {w: a.usedW, reps: tReps, kind: "hold", msg: `Stay at ${a.usedW} lb until you hit every set`};
@@ -728,7 +775,7 @@
       const logged = setsOf(body, r.name), last = lastFor(r.name, id);
       let tg = targetFor(r.name, r.reps, week, id);
       if (mode === "yellow" && tg.kind === "up") {
-        if (tg.w != null) { const w0 = tg.w - incFor(baseName(r.name)); tg = {w: w0, reps: tg.reps, kind: "hold", msg: `Yellow day: stay at ${w0} lb, no increase today`}; }
+        if (tg.w != null) { const w0 = tg.from != null ? tg.from : tg.w - incFor(baseName(r.name), tg.w); tg = {w: w0, reps: tg.reps, kind: "hold", msg: `Yellow day: stay at ${w0} lb, no increase today`}; }
         else { const add = /sec/.test(r.reps) ? 5 : 1; tg = {w: null, reps: Math.max(1, tg.reps - add), kind: "hold", msg: "Yellow day: same as last time, no increase today"}; }
       }
       if (mode === "light") tg = {w: tg.w != null ? round5(tg.w * 0.6) : null, reps: tg.reps, kind: "deload", msg: tg.w != null ? `Light day: about 60% of ${tg.w} lb. Smooth, easy reps` : "Light day: easy reps, stop well short of your limit"};
@@ -750,6 +797,7 @@
       return `<article class="ex"><div class="exhead"><div class="exnum"><span class="num">${li + 1}</span><span class="clock">${clock(r.start)}</span></div>
         <div class="exbody"><div class="exname">${esc(r.name)}</div>
         ${r.jointFrom ? `<p class="cue">Swapped in for ${esc(r.jointFrom)} to spare your ${esc(r.jointWhy)}.</p>` : ""}
+        ${r.stepFrom && !r.jointFrom ? `<p class="cue">Easier version of ${esc(r.stepFrom)} for now. Do it cleanly twice and ${esc(r.stepFrom)} comes back.</p>` : ""}
         <div class="target ${tg.kind}"><span class="tgt-main">Target: ${tg.w != null ? tg.w + " lb × " : bw ? "bodyweight × " : ""}${esc(repsShow)}</span><span class="tgt-why">${arrow} ${esc(tg.msg)}</span></div>
         <div class="meta"><b>${r.sets} sets × ${esc(repsShow)}</b> · rest ${restTxt(r.rest)} between sets${r.ramp ? ` · do ${Math.round(r.ramp)} min of lighter warm-up sets first` : ""}</div>
         ${STRETCH.has(baseName(r.name)) ? `<p class="cue">Stretch focus: lower for 3 seconds and pause 1 second in the deepest position you can control.</p>` : ""}
@@ -766,7 +814,95 @@
   function renderAll() {
     renderSetup();
     if (!profile || editingProfile) { renderCheckin(); return; }
-    renderHeader(); renderCheckin(); renderWeek(); renderTabs(); renderWeekCard(); renderSession(); renderFooter();
+    renderHeader(); renderNudge(); renderCheckin(); renderWeek(); renderTabs(); renderWeekCard(); renderSession(); renderFooter(); renderProgress();
+  }
+  // ---------- My progress: one chart per exercise plus morning trends, drawn on the page (works offline) ----------
+  function progressSeries() {
+    const by = {};
+    for (const s of Object.values(sessions)) {
+      if (!s || !s.sets || !s.date) continue;
+      for (const [ex, arr] of Object.entries(s.sets)) {
+        const bn = baseName(ex), done = (arr || []).filter(x => x && x.r != null && +x.r > 0);
+        if (!done.length) continue;
+        const bw = isBW(bn), timed = (FIXED_REPS[bn] || []).some(t => /sec/.test(t));
+        let y, top;
+        if (bw) { y = Math.max(...done.map(x => +x.r)); top = y + (timed ? " sec" : " reps"); }
+        else {
+          const ws = done.filter(x => +x.w > 0); if (!ws.length) continue;
+          const best = ws.reduce((m, x) => { const e = +x.w * (1 + Math.min(+x.r, 12) / 30); return !m || e > m.e ? {e, x} : m; }, null);
+          y = Math.round(best.e); top = best.x.w + " lb × " + best.x.r;
+        }
+        const ser = by[bn] = by[bn] || {name: bn, bw, timed, pts: {}};
+        const cur = ser.pts[s.date];
+        if (!cur || y > cur.y) ser.pts[s.date] = {d: s.date, y, top, light: s.readiness === "light" || s.week === 4};
+      }
+    }
+    return Object.values(by).map(o => Object.assign(o, {pts: Object.values(o.pts).sort((a, b) => a.d.localeCompare(b.d))}))
+      .sort((a, b) => (b.pts.length - a.pts.length) || b.pts[b.pts.length - 1].d.localeCompare(a.pts[a.pts.length - 1].d));
+  }
+  function sparkSvg(pts, label) {
+    const W = 320, H = 120, px = 10, py = 12, ys = pts.map(p => p.y);
+    // Keep the vertical scale at least ±15% of the average, so small day-to-day noise doesn't look dramatic.
+    let lo = Math.min(...ys), hi = Math.max(...ys);
+    const mid = (lo + hi) / 2, minSpan = Math.max(Math.abs(mid) * 0.3, 1);
+    if (hi - lo < minSpan) { lo = mid - minSpan / 2; hi = mid + minSpan / 2; }
+    const t0 = pd(pts[0].d).getTime(), t1 = pd(pts[pts.length - 1].d).getTime(), span = Math.max(1, t1 - t0);
+    const X = (p) => pts.length === 1 ? W / 2 : px + (pd(p.d).getTime() - t0) / span * (W - 2 * px);
+    const Y = (v) => H - py - (v - lo) / (hi - lo) * (H - 2 * py);
+    const line = pts.map(p => X(p).toFixed(1) + "," + Y(p.y).toFixed(1)).join(" ");
+    const dots = pts.map(p => `<circle cx="${X(p).toFixed(1)}" cy="${Y(p.y).toFixed(1)}" r="5" class="${p.light ? "pdot light" : "pdot"}"/>`).join("");
+    return `<svg class="pchart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(label)}">
+      <line x1="${px}" x2="${W - px}" y1="${H - py}" y2="${H - py}" class="pbase"/>${pts.length > 1 ? `<polyline points="${line}" class="pline"/>` : ""}${dots}</svg>`;
+  }
+  function renderProgress() {
+    const box = $("progress"), card = $("progressCard"); if (!box || !card) return;
+    const series = progressSeries();
+    const n = series.length;
+    $("progressCount").textContent = n ? `${n} exercise${n === 1 ? "" : "s"}` : "";
+    if (!card.open) return;
+    const fmtShort = (d) => pd(d).toLocaleDateString([], {month: "short", day: "numeric"});
+    const parts = [];
+    // Morning trends first: they move fastest and matter most for heart health.
+    const ci = Object.values(checkins).filter(c => c && c.date).sort((a, b) => a.date.localeCompare(b.date)).slice(-30);
+    const trend = (key, name, unit, goodDown) => {
+      const pts = ci.filter(c => typeof c[key] === "number" && c[key] > 0).map(c => ({d: c.date, y: c[key]}));
+      if (pts.length < 2) return "";
+      const a = pts[0].y, b = pts[pts.length - 1].y, diff = Math.round((b - a) * 10) / 10;
+      const good = diff === 0 ? "" : (diff < 0) === goodDown ? " pgood" : " pbad";
+      return `<div class="pitem"><div class="phead"><b>${name}</b><span class="pnum${good}">${a} → ${b} ${unit}</span></div>
+        ${sparkSvg(pts, name + " trend")}<div class="pdates"><span>${fmtShort(pts[0].d)}</span><span>${pts.length} mornings</span><span>${fmtShort(pts[pts.length - 1].d)}</span></div></div>`;
+    };
+    const morning = [hrNumbersOk() ? trend("rhr", "Resting heart rate", "bpm", true) : "", hrNumbersOk() ? trend("hrv", "Overnight HRV", "ms", false) : "", trend("sleep", "Sleep", "h", false)].join("");
+    if (morning) parts.push(`<h3 class="psec">Mornings</h3>${morning}`);
+    const lifts = series.map(o => {
+      const a = o.pts[0], b = o.pts[o.pts.length - 1];
+      const pct = a.y ? Math.round((b.y - a.y) / a.y * 100) : 0;
+      const unit = o.bw ? (o.timed ? "sec" : "reps") : "lb";
+      const head = o.pts.length === 1 ? `First time: ${esc(b.top)}` : `${a.y} → ${b.y} ${unit}${pct ? ` (${pct > 0 ? "+" : ""}${pct}%)` : ""}`;
+      return `<div class="pitem"><div class="phead"><b>${esc(o.name)}</b><span class="pnum${pct > 0 ? " pgood" : pct < 0 ? " pbad" : ""}">${head}</span></div>
+        ${sparkSvg(o.pts, o.name + " progress")}
+        <div class="pdates"><span>${fmtShort(a.d)}</span><span>${o.pts.length} sessions</span><span>${fmtShort(b.d)}</span></div>
+        <div class="meta">Best set last time: <b>${esc(b.top)}</b></div></div>`;
+    }).join("");
+    if (lifts) parts.push(`<h3 class="psec">Lifts</h3><p class="meta">Weighted lifts show your estimated max: what your best set says you could lift once. Bodyweight moves show your best set. Hollow dots are easy weeks and light days.</p>${lifts}`);
+    box.innerHTML = parts.join("") || `<p class="meta">Log a few workouts and your progress shows up here, one chart per exercise.</p>`;
+  }
+  document.addEventListener("toggle", (e) => { if (e.target && e.target.id === "progressCard") renderProgress(); }, true);
+  // ---------- backup reminder (phone and browser versions; the Claude version saves to the cloud already) ----------
+  function noteBackup() { settings = Object.assign({}, settings, {lastBackupAt: Date.now()}); saveSettings(); renderNudge(); }
+  function renderNudge() {
+    const el = $("backupNudge"); if (!el) return;
+    const dates = Object.values(sessions).filter(hasData).map(b => b.date).filter(Boolean).sort();
+    const first = dates[0], now = Date.now(), DAY = 864e5;
+    const last = settings.lastBackupAt || 0, snooze = settings.backupSnoozeUntil || 0;
+    const due = STANDALONE && first && now > snooze && (last ? now - last > 30 * DAY : now - pd(first).getTime() > 7 * DAY);
+    el.hidden = !due;
+    if (!due) return;
+    const n = Object.values(sessions).filter(hasData).length;
+    el.innerHTML = `<span class="label">Back up your training</span>
+      <p>${last ? `Your last backup was ${Math.floor((now - last) / DAY)} days ago.` : "You haven't made a backup yet."} You have ${n} workout${n === 1 ? "" : "s"} saved only on this phone. If the phone is lost or reset, they're gone.</p>
+      <p>Tap <b>Back up now</b>, then pick <b>Google Drive</b>. It takes 10 seconds.</p>
+      <div class="ci-btns"><button type="button" class="btn" id="nudgeBackup">Back up now</button><button type="button" class="btn alt" id="nudgeLater">Remind me in a week</button></div>`;
   }
 
   // ================= edits and saving =================
@@ -836,7 +972,8 @@
     else if (b.id === "ciCancel") { ciEditing = false; $("checkin").dataset.mode = ""; renderCheckin(); }
     else if (b.id === "ciLightOn" || b.id === "ciLightOff") { const c = ciToday(); if (!c) return; saveCheckin(Object.assign({}, c, {choice: b.id === "ciLightOn" ? "light" : null, savedAt: Date.now()})); renderSession(); }
     else if (b.id === "exportXlsx") exportExcel();
-    else if (b.id === "backupJson") backupData();
+    else if (b.id === "backupJson" || b.id === "nudgeBackup") backupData();
+    else if (b.id === "nudgeLater") { settings = Object.assign({}, settings, {backupSnoozeUntil: Date.now() + 7 * 864e5}); saveSettings(); renderNudge(); }
     else if (b.id === "restorePick") { $("restorePanel").hidden = false; $("backupPanel").hidden = true; }
     else if (b.id === "restoreChooseFile") $("restoreFile").click();
     else if (b.id === "restoreUseText") checkBackup($("restoreText").value);
@@ -844,7 +981,7 @@
     else if (b.id === "backupClose") $("backupPanel").hidden = true;
     else if (b.id === "backupCopy") {
       const ta = $("backupText"), sel = () => { ta.focus(); ta.select(); saveMsg("Text selected. Use your phone's Copy.", ""); };
-      try { navigator.clipboard.writeText(ta.value).then(() => saveMsg("Copied.", "ok"), sel); } catch (err) { sel(); }
+      try { navigator.clipboard.writeText(ta.value).then(() => { noteBackup(); saveMsg("Copied. Paste it into an email to yourself or a note in Google Drive.", "ok"); }, sel); } catch (err) { sel(); }
     }
     else if (b.id === "restoreYes") applyRestore();
     else if (b.id === "restoreNo") { pendingRestore = null; $("restoreConfirm").hidden = true; saveMsg("Restore cancelled."); }
@@ -891,7 +1028,7 @@
     const P = window.Capacitor && window.Capacitor.Plugins;       // Android app built with Capacitor
     if (P && P.Filesystem && P.Share) {
       const w = await P.Filesystem.writeFile({path: filename, data: await blobToB64(blob), directory: "CACHE"});
-      await P.Share.share({title: filename, url: w.uri, dialogTitle: "Save or send " + filename});
+      await P.Share.share({title: filename, url: w.uri, dialogTitle: /backup/i.test(filename) ? "Save your backup (Google Drive is safest)" : "Save or send " + filename});
       return "shared";
     }
     const url = URL.createObjectURL(blob), a = document.createElement("a");     // phone or desktop browser
@@ -1100,7 +1237,11 @@
     await flushNow();
     const payload = {app: BACKUP_APP, schema: 1, exportedAt: new Date().toISOString(), profile, settings, sessions, checkins};
     $("backupText").value = JSON.stringify(payload);
-    try { await saveFile("Training backup " + today() + ".json", JSON.stringify(payload, null, 1), "application/json"); saveMsg("Backed up. Keep this file somewhere safe, like Google Drive or email it to yourself.", "ok"); }
+    try {
+      const how = await saveFile("Training backup " + today() + ".json", JSON.stringify(payload, null, 1), "application/json");
+      noteBackup();
+      saveMsg(how === "shared" ? "Backup ready. If you picked Google Drive, it's safe even if you lose this phone." : "Backed up. Keep this file somewhere safe: Google Drive, or email it to yourself.", "ok");
+    }
     catch (e) {
       if (e && e.code === "declined") { saveMsg("Backup cancelled."); return; }
       $("backupPanel").hidden = false; $("restorePanel").hidden = true; saveMsg("Couldn't save a file here. Copy the text below instead.", "warn");
@@ -1350,7 +1491,8 @@
     }, () => setStatus("Lost connection. Reload to reconnect.", "warn"));
   }
   if (globalThis.__COACH_TEST__) {   // test hook only; never set on the published page
-    globalThis.__coach = {setProfile: (p) => { profile = p; }, setCheckin: (c) => { checkins[ciId(today())] = c; }, plan, buildSession, budget, level, scoreCheckin, cardioKind};
+    globalThis.__coach = {setProfile: (p) => { profile = p; }, setCheckin: (c) => { checkins[ciId(today())] = c; }, plan, buildSession, budget, level, scoreCheckin, cardioKind,
+      setSessions: (x) => { sessions = x; }, targetFor, liftsFor, judge, incFor};
     return;
   }
   init();

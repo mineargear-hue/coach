@@ -370,6 +370,27 @@ body.typing .tb-restword, body.typing .tb-resttime { font-size: 1.6rem; }
 .hero .ghost { color: var(--hero-ink); border-color: rgba(255,255,255,.45); justify-self: start; }
 #setup, #main { display: grid; gap: 22px; }
 #setup[hidden], #main[hidden], #checkin[hidden] { display: none !important; }
+/* ===== My progress: charts drawn on the page ===== */
+.progresscard summary { cursor: pointer; list-style: none; display: flex; justify-content: space-between; align-items: baseline; gap: 12px; min-height: 48px; }
+.progresscard summary::-webkit-details-marker { display: none; }
+.progresscard summary::after { content: "▾"; font-size: 1.4rem; color: var(--accent); }
+.progresscard[open] summary::after { content: "▴"; }
+.ptitle { font-family: var(--display); font-size: 1.7rem; font-weight: 700; text-transform: uppercase; flex: 1; }
+.plist { display: grid; gap: 18px; margin-top: 8px; }
+.psec { font-size: 1.3rem; text-transform: uppercase; margin-top: 4px; }
+.pitem { display: grid; gap: 6px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+.pitem:last-child { border-bottom: 0; }
+.phead { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: baseline; gap: 4px 12px; }
+.phead b { font-size: 1.15rem; }
+.pnum { font-family: var(--mono); font-size: 1.15rem; font-variant-numeric: tabular-nums; }
+.pnum.pgood { color: var(--good); } .pnum.pbad { color: var(--warn); }
+.pchart { width: 100%; height: auto; display: block; overflow: visible; }
+.pchart .pbase { stroke: var(--line); stroke-width: 1.5; }
+.pchart .pline { fill: none; stroke: var(--accent); stroke-width: 3.5; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.pchart .pdot { fill: var(--accent); stroke: var(--surface); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.pchart .pdot.light { fill: var(--surface); stroke: var(--accent); }
+.pdates { display: flex; justify-content: space-between; gap: 8px; font-size: .9rem; color: var(--muted); flex-wrap: wrap; }
+.nudge p { margin: 0; }
 </style>
 </head>
 <body>
@@ -390,6 +411,8 @@ body.typing .tb-restword, body.typing .tb-resttime { font-size: 1.6rem; }
       <p>You answered yes on the health check, so the plan stays gentle: lighter sets, no hard intervals, steady cardio. Show this plan to your doctor.</p>
       <button type="button" class="btn alt" id="clearedBtn">My doctor cleared me for exercise</button>
     </section>
+
+    <section class="easy nudge" id="backupNudge" hidden aria-label="Backup reminder"></section>
 
     <section class="timerbar" aria-label="Workout timer">
       <div class="tb-top">
@@ -421,6 +444,11 @@ body.typing .tb-restword, body.typing .tb-resttime { font-size: 1.6rem; }
     </section>
     <section class="list" id="exList"></section>
 
+    <details class="card progresscard" id="progressCard">
+      <summary><span class="ptitle">My progress</span><span class="meta" id="progressCount"></span></summary>
+      <div id="progress" class="plist"></div>
+    </details>
+
     <section class="savebar" aria-label="Save and export">
       <span class="label">Your data</span>
       <div class="savebtns">
@@ -440,7 +468,7 @@ body.typing .tb-restword, body.typing .tb-resttime { font-size: 1.6rem; }
         <div class="savebtns"><button type="button" class="btn" id="restoreUseText">Use pasted text</button><button type="button" class="btn alt" id="restoreChooseFile">Choose a file</button><button type="button" class="btn alt" id="restoreClose">Close</button></div>
       </div>
       <div class="confirm" id="restoreConfirm" hidden></div>
-      <span class="meta" id="saveStatus">Every set saves automatically on this phone. Nothing is sent anywhere. Tap Back up data now and then.</span>
+      <span class="meta" id="saveStatus">Every set saves automatically on this phone. Nothing is sent anywhere. Back up now and then, and pick Google Drive so a lost phone doesn't mean lost workouts.</span>
     </section>
 
     <p class="note">Weights are in lb. Breathe out on the hard part of every lift and leave 2 reps in the tank. Stop and get checked for chest pressure, jaw or arm pain, fainting or unusual breathlessness. General exercise guidance, not medical advice.</p>
