@@ -579,7 +579,7 @@
       ${c.stop ? `<p class="ci-plan"><b>${esc(c.stop)}</b></p>` : ""}
       ${(c.flags || []).length ? `<ul class="ci-flags">${c.flags.map(f => `<li>${esc(f)}</li>`).join("")}</ul>` : c.light === "green" ? `<p class="ci-plan"><b>No flags.</b> You're good to go.</p>` : ""}
       <p class="ci-plan">${esc(L.plan)}</p>${jtxt}
-      <div class="ci-btns"><button type="button" class="btn alt" id="ciEdit">Change answers</button></div>${trendHtml()}`;
+      <div class="ci-btns">${c.light !== "stop" ? `<button type="button" class="btn" id="shareDay">Share today's call</button>` : ""}<button type="button" class="btn alt" id="ciEdit">Change answers</button></div>${trendHtml()}`;
   }
   function trendHtml() {
     const list = Object.values(checkins).filter(c => c && c.date).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 7);
@@ -630,11 +630,20 @@
   }
 
   // ================= setup form =================
+  // The restore panel lives in "Your data" at the bottom of the main screen. On a fresh install the main screen is hidden
+  // behind setup, so it's moved onto the setup screen (and back again once there's a profile).
+  function dockRestore(toSetup) {
+    const host = toSetup ? $("suRestoreBox") : document.querySelector(".savebar");
+    if (!host || $("restorePanel").parentNode === host) return;
+    if (toSetup) host.append($("restorePanel"), $("restoreConfirm"), $("saveStatus"));
+    else { $("backupPanel").after($("restorePanel"), $("restoreConfirm")); host.append($("saveStatus")); }
+  }
   function renderSetup() {
     const el = $("setup"), show = !profile || editingProfile;
     el.hidden = !show; $("main").hidden = show;
-    if (!show) return;
+    if (!show) { dockRestore(false); return; }
     if (el.dataset.ready === "1") return;          // don't wipe answers mid-typing on a background sync
+    dockRestore(false);
     el.dataset.ready = "1";
     const p = profile || {};
     const radios = (name, opts, cur) => `<div class="ci-pills wrap">${opts.map(([v, t]) => `<label class="ci-opt"><input type="radio" name="${name}" id="${name}-${v}" value="${v}" ${cur === v ? "checked" : ""}><span>${t}</span></label>`).join("")}</div>`;
@@ -644,6 +653,8 @@
     el.innerHTML = `
       <header class="hero"><span class="hero-eyebrow">Strength · Flexibility · Fat loss · Heart</span><h1>Daily Training Coach</h1><div class="lane" aria-hidden="true"></div>
         <p class="sub">${editingProfile ? "Change any answer and tap Save. Your plan rebuilds; your logged history stays." : "Answer a few questions and the app builds your 4-week plan. Every morning a quick check-in adjusts that day. About 3 minutes."}</p></header>
+      ${profile ? "" : `<section class="card su" id="suRestoreBox"><p class="ci-help"><b>Used this app before?</b> Restore your backup instead and skip the questions.</p>
+        <div class="ci-btns"><button type="button" class="btn alt" id="suRestore">Restore a backup</button></div></section>`}
       <section class="card su"><h2>About you</h2>
         ${q("Your first name (optional)", `<span class="field"><input id="suName" type="text" autocomplete="given-name" value="${esc(p.name || "")}" placeholder="Name"></span>`)}
         ${q("Your age", `<span class="field"><input id="suAge" type="number" inputmode="numeric" min="18" max="100" value="${esc(p.age || "")}" placeholder="Age"><span>years</span></span>`)}
@@ -974,6 +985,7 @@
     else if (b.id === "exportXlsx") exportExcel();
     else if (b.id === "backupJson" || b.id === "nudgeBackup") backupData();
     else if (b.id === "nudgeLater") { settings = Object.assign({}, settings, {backupSnoozeUntil: Date.now() + 7 * 864e5}); saveSettings(); renderNudge(); }
+    else if (b.id === "suRestore") { dockRestore(true); $("restorePanel").hidden = false; }
     else if (b.id === "restorePick") { $("restorePanel").hidden = false; $("backupPanel").hidden = true; }
     else if (b.id === "restoreChooseFile") $("restoreFile").click();
     else if (b.id === "restoreUseText") checkBackup($("restoreText").value);
@@ -986,6 +998,8 @@
     else if (b.id === "restoreYes") applyRestore();
     else if (b.id === "restoreNo") { pendingRestore = null; $("restoreConfirm").hidden = true; saveMsg("Restore cancelled."); }
     else if (b.id === "tbStart") startWorkout();
+    else if (b.id === "shareDay") shareCard("checkin");
+    else if (b.id === "shareWorkout") shareCard("workout");
     else if (b.id === "tbTest") testAlerts();
     else if (b.id === "tbPause") pauseWorkout();
     else if (b.id === "tbEnd") { tb.confirmEnd = true; renderTimer(); }
@@ -1035,6 +1049,131 @@
     a.href = url; a.download = filename; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 5000);
     return "downloaded";
+  }
+
+  // ================= share card: one tap makes a picture of today's call or workout =================
+  // Shown only after the check-in and after "End" on the workout timer, never between sets.
+  // Privacy: the card never shows sleep, heart rate, HRV or blood pressure, only the coach's call, lifts and the streak.
+  const SHARE_URL = "coach.mineargear.com";
+  const LKEY = "coach.lastWorkout";
+  function lastWorkout() { try { const x = JSON.parse(localStorage.getItem(LKEY) || "null"); return x && x.date === today() ? x : null; } catch (e) { return null; } }
+  // Weeks in a row with anything logged (a workout or a morning check-in). Rest and easy days count.
+  // The current week can't break the run until it's over.
+  function weeksInARow() {
+    const act = new Set();
+    for (const b of Object.values(sessions)) if (b && b.date && hasData(b)) act.add(mondayOf(b.date));
+    for (const c of Object.values(checkins)) if (c && c.date && c.light) act.add(mondayOf(c.date));
+    const d = pd(mondayOf(today()));
+    if (!act.has(fmtD(d))) d.setDate(d.getDate() - 7);
+    let n = 0;
+    while (act.has(fmtD(d)) && n < 520) { n++; d.setDate(d.getDate() - 7); }
+    return n;
+  }
+  function todaysWorkout() {
+    let best = null;
+    for (const [id, b] of Object.entries(sessions)) if (b && b.date === today() && hasData(b) && (!best || (b.updatedAt || 0) > (best.b.updatedAt || 0))) best = {id, b};
+    return best;
+  }
+  // "Heaviest yet" lines: today's top weight (or best reps) beats every earlier normal session. Light and easy-week days don't brag.
+  function winsFor(id, b) {
+    const ci = b.date === today() ? ciToday() : null;
+    const out = [], easy = b.readiness === "light" || b.week === 4 || !!(ci && ci.light === "red");
+    for (const [name, arr] of Object.entries(b.sets || {})) {
+      const done = (arr || []).filter(x => x && (x.done || x.r != null || x.w != null));
+      if (!done.length) continue;
+      const bn = baseName(name), prev = historyFor(name, id).filter(h => !h.light && h.week !== 4 && (h.date || "") < today());
+      if (easy || !prev.length) { out.push({t: `${bn} · ${done.length} set${done.length > 1 ? "s" : ""}`, up: false}); continue; }
+      if (isBW(bn)) {
+        const unit = /plank/i.test(bn) ? "sec" : "reps", best = Math.max(...done.map(x => +x.r || 0)), pb = Math.max(...prev.flatMap(h => h.sets.map(x => +x.r || 0)));
+        out.push(best > pb ? {t: `${bn}: ${best} ${unit}, best yet`, up: true} : {t: `${bn} · ${done.length} sets`, up: false});
+      } else {
+        const ws = done.map(x => x.w).filter(v => typeof v === "number" && v > 0);
+        const top = ws.length ? Math.max(...ws) : 0, pt = Math.max(0, ...prev.flatMap(h => h.sets.map(x => +x.w || 0)));
+        out.push(top && pt && top > pt ? {t: `${bn}: ${top} lb, +${top - pt}`, up: true} : {t: `${bn} · ${done.length} sets`, up: false});
+      }
+    }
+    return out.sort((a, c) => (c.up ? 1 : 0) - (a.up ? 1 : 0));
+  }
+  function cardFacts(kind) {
+    const c = ciToday(), wk = weeksInARow();
+    if (c && c.light === "stop") return null;          // never make a share card on a stop day
+    const call = !c ? null
+      : c.light === "green" ? {word: "GO", col: "#7BE0A6", line: "Coach said go. Full plan today."}
+      : c.light === "yellow" ? {word: "EASY", col: "#F5C46B", line: "Coach said ease off today. I listened."}
+      : c.light === "red" && c.choice === "light" ? {word: "LIGHT", col: "#FF9B8F", line: "Coach said take it light today. I listened."}
+      : c.light === "red" ? {word: "REST", col: "#FF9B8F", line: "Coach said rest today. I listened."} : null;
+    const streak = wk > 1 ? `${wk} weeks in a row` : "Week 1";
+    if (kind === "checkin") {
+      if (!call) return null;
+      return {word: call.word, col: call.col, head: call.line, sub: "My training app checks in with me every morning and sets the workout to match.", lines: [], streak,
+        text: `${call.line} ${streak}. Daily Training Coach: https://${SHARE_URL}`};
+    }
+    const tw = todaysWorkout(), lw = lastWorkout();
+    const key = tw ? tw.id.split("-").slice(2).join("-") : null, title = key ? titleOf(key) : "Workout";
+    const sets = tw ? Object.values(tw.b.sets || {}).reduce((n, a) => n + (a || []).filter(x => x && (x.done || x.r != null)).length, 0) : 0;
+    const bits = [lw && lw.min ? lw.min + " min" : "", sets ? sets + " sets" : ""].filter(Boolean).join(" · ");
+    const lines = tw ? winsFor(tw.id, tw.b).slice(0, 3) : [];
+    const up = lines.filter(l => l.up).length;
+    return {word: call ? call.word : "DONE", col: call ? call.col : "#7BE0A6", head: `${title} done${bits ? " · " + bits : ""}`,
+      sub: call && call.word !== "GO" ? call.line : up ? `${up} lift${up > 1 ? "s" : ""} at my heaviest yet.` : "", lines, streak,
+      text: `${title} done${bits ? " (" + bits + ")" : ""}. ${streak}. Daily Training Coach: https://${SHARE_URL}`};
+  }
+  function wrapText(g, txt, x, y, maxW, lh) {
+    const words = String(txt).split(" "); let line = "";
+    for (const w of words) {
+      const t = line ? line + " " + w : w;
+      if (g.measureText(t).width > maxW && line) { g.fillText(line, x, y); y += lh; line = w; } else line = t;
+    }
+    if (line) g.fillText(line, x, y);
+    return y;
+  }
+  async function drawCard(f) {
+    const D = '"Barlow Condensed", "Arial Narrow", sans-serif', B = '"IBM Plex Sans", system-ui, sans-serif';
+    try { await Promise.all([`700 300px ${D}`, `600 44px ${D}`, `700 60px ${B}`, `400 44px ${B}`].map(x => document.fonts.load(x))); } catch (e) {}
+    const W = 1080, H = 1350, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
+    const g = cv.getContext("2d");
+    g.fillStyle = "#0B2A3B"; g.fillRect(0, 0, W, H);
+    g.fillStyle = "rgba(255,255,255,0.04)"; for (let x = 0; x < W; x += 90) g.fillRect(x, 0, 4, H);   // pool lane lines
+    let y = 130;
+    g.fillStyle = "#9FD6E8"; g.font = `600 44px ${D}`;
+    try { g.letterSpacing = "6px"; } catch (e) {}
+    g.fillText(("Daily Training Coach · " + niceDate(today())).toUpperCase(), 80, y);
+    try { g.letterSpacing = "0px"; } catch (e) {}
+    y += 50;
+    for (let x = 92, i = 0; x < W - 80; x += 34, i++) { g.fillStyle = i % 2 ? "#FFFFFF" : "#D1453B"; g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fill(); }  // lane rope
+    y += 320;
+    g.fillStyle = f.col; g.font = `700 ${f.word.length > 4 ? 270 : 330}px ${D}`; g.fillText(f.word, 70, y);
+    y += 100; g.fillStyle = "#F2F7FA"; g.font = `700 58px ${B}`; y = wrapText(g, f.head, 80, y, W - 160, 70);
+    if (f.sub) { y += 66; g.fillStyle = "#D6E6EE"; g.font = `400 46px ${B}`; y = wrapText(g, f.sub, 80, y, W - 160, 58); }
+    if (f.lines.length) {
+      y += 20; g.font = `400 44px ${B}`;
+      for (const l of f.lines) { y += 64; if (y > H - 300) break; g.fillStyle = l.up ? "#7BE0A6" : "#D6E6EE"; g.fillText((l.up ? "↑ " : "• ") + l.t, 80, y); }
+    }
+    g.fillStyle = "rgba(255,255,255,0.10)"; g.fillRect(80, H - 250, W - 160, 3);
+    g.fillStyle = "#F2F7FA"; g.font = `700 92px ${D}`; g.fillText(f.streak.toUpperCase(), 80, H - 140);
+    g.fillStyle = "#9FD6E8"; g.font = `600 44px ${D}`; g.fillText(SHARE_URL, 80, H - 70);
+    return await new Promise((res) => cv.toBlob(res, "image/png"));
+  }
+  async function shareCard(kind) {
+    const f = cardFacts(kind);
+    if (!f) return;
+    setStatus("Making your picture…");
+    try {
+      const blob = await drawCard(f), name = "coach-" + today() + ".png";
+      const P = window.Capacitor && window.Capacitor.Plugins;
+      if (STANDALONE && P && P.Filesystem && P.Share) {          // Android app: the phone's share screen, picture attached
+        const w = await P.Filesystem.writeFile({path: name, data: await blobToB64(blob), directory: "CACHE"});
+        await P.Share.share({title: "My training today", text: f.text, url: w.uri, dialogTitle: "Share today"});
+      } else {
+        let file = null; try { file = new File([blob], name, {type: "image/png"}); } catch (e) {}
+        if (STANDALONE && file && navigator.canShare && navigator.canShare({files: [file]})) await navigator.share({files: [file], text: f.text});
+        else await saveFile(name, blob, "image/png");             // Claude or a desktop browser: save the picture
+      }
+      setStatus(store ? store.label : "", store ? store.cls : "");
+    } catch (e) {
+      if (e && (e.name === "AbortError" || /cancel/i.test(String(e.message || e)))) { setStatus(store ? store.label : "", store ? store.cls : ""); return; }
+      setStatus("Couldn't share the picture. Try again.", "warn");
+    }
   }
 
   // ================= Excel export =================
@@ -1365,7 +1504,8 @@
   }
   function pauseWorkout() { if (!tb.running) return; tb.running = false; tb.pausedAt = Date.now(); try { tb.lock && tb.lock.release(); } catch (e) {} renderTimer(); persistTimer(); }
   function endWorkout() {
-    tb.confirmEnd = false; const total = fmt(elapsed());
+    tb.confirmEnd = false; const ms = elapsed(), total = fmt(ms);
+    try { localStorage.setItem(LKEY, JSON.stringify({date: today(), min: Math.max(1, Math.round(ms / 60000))})); } catch (e) {}
     tb.start = 0; tb.running = false; tb.restEnd = 0; tb.goUntil = 0;
     try { tb.lock && tb.lock.release(); } catch (e) {}
     renderTimer(); $("tbLabel").textContent = "Last workout: " + total; persistTimer();
@@ -1395,7 +1535,8 @@
     const started = !!tb.start;
     $("tbBtns").innerHTML = tb.confirmEnd
       ? `<span class="meta">End this workout?</span><button type="button" class="btn" id="tbEndYes">End workout</button><button type="button" class="btn alt" id="tbEndNo">Keep going</button>`
-      : !started ? `<button type="button" class="btn" id="tbStart">Start workout</button><button type="button" class="btn alt" id="tbTest">Test sound</button>`
+      : !started ? (lastWorkout() ? `<button type="button" class="btn" id="shareWorkout">Share this workout</button><button type="button" class="btn alt" id="tbStart">Start again</button>`
+        : `<button type="button" class="btn" id="tbStart">Start workout</button><button type="button" class="btn alt" id="tbTest">Test sound</button>`)
       : (tb.running ? `<button type="button" class="btn alt" id="tbPause">Pause</button>` : `<button type="button" class="btn" id="tbStart">Resume</button>`)
         + `<button type="button" class="btn alt" id="tbEnd">End</button>`;
     if (started) $("tbLabel").textContent = tb.running ? "Workout time" : "Paused";
@@ -1492,7 +1633,8 @@
   }
   if (globalThis.__COACH_TEST__) {   // test hook only; never set on the published page
     globalThis.__coach = {setProfile: (p) => { profile = p; }, setCheckin: (c) => { checkins[ciId(today())] = c; }, plan, buildSession, budget, level, scoreCheckin, cardioKind,
-      setSessions: (x) => { sessions = x; }, targetFor, liftsFor, judge, incFor};
+      setSessions: (x) => { sessions = x; }, targetFor, liftsFor, judge, incFor,
+      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard};
     return;
   }
   init();
