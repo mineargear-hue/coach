@@ -1209,10 +1209,10 @@
     const c = ciToday(), wk = weeksInARow();
     if (c && c.light === "stop") return null;          // never make a share card on a stop day
     const call = !c ? null
-      : c.light === "green" ? {word: "GO", col: "#7BE0A6", line: "Coach said go. Full plan today."}
-      : c.light === "yellow" ? {word: "EASY", col: "#F5C46B", line: "Coach said ease off today. I listened."}
-      : c.light === "red" && c.choice === "light" ? {word: "LIGHT", col: "#FF9B8F", line: "Coach said take it light today. I listened."}
-      : c.light === "red" ? {word: "REST", col: "#FF9B8F", line: "Coach said rest today. I listened."} : null;
+      : c.light === "green" ? {word: "GO", col: "#C8F542", line: "Coach said go. Full plan today."}
+      : c.light === "yellow" ? {word: "EASY", col: "#FFB547", line: "Coach said ease off today. I listened."}
+      : c.light === "red" && c.choice === "light" ? {word: "LIGHT", col: "#FF7A6B", line: "Coach said take it light today. I listened."}
+      : c.light === "red" ? {word: "REST", col: "#FF7A6B", line: "Coach said rest today. I listened."} : null;
     const streak = wk > 1 ? `${wk} weeks in a row` : "Week 1";
     if (kind === "checkin") {
       if (!call) return null;
@@ -1225,7 +1225,7 @@
     const bits = [lw && lw.min ? lw.min + " min" : "", sets ? sets + " sets" : ""].filter(Boolean).join(" · ");
     const lines = tw ? winsFor(tw.id, tw.b).slice(0, 3) : [];
     const up = lines.filter(l => l.up).length;
-    return {word: call ? call.word : "DONE", col: call ? call.col : "#7BE0A6", head: `${title} done${bits ? " · " + bits : ""}`,
+    return {word: call ? call.word : "DONE", col: call ? call.col : "#C8F542", head: `${title} done${bits ? " · " + bits : ""}`,
       sub: call && call.word !== "GO" ? call.line : up ? `${up} lift${up > 1 ? "s" : ""} at my heaviest yet.` : "", lines, streak,
       text: `${title} done${bits ? " (" + bits + ")" : ""}. ${streak}. Daily Training Coach: https://${SHARE_URL}`};
   }
@@ -1238,31 +1238,42 @@
     if (line) g.fillText(line, x, y);
     return y;
   }
+  // Night Session look (theme 3): near-black, one lime accent, wide Archivo headlines.
   async function drawCard(f) {
-    const D = '"Barlow Condensed", "Arial Narrow", sans-serif', B = '"IBM Plex Sans", system-ui, sans-serif';
-    try { await Promise.all([`700 300px ${D}`, `600 44px ${D}`, `700 60px ${B}`, `400 44px ${B}`].map(x => document.fonts.load(x))); } catch (e) {}
+    const D = '"Archivo", "Arial Black", sans-serif', B = '"Atkinson Hyperlegible", system-ui, sans-serif';
+    try { await Promise.all([`900 300px ${D}`, `800 90px ${D}`, `700 58px ${B}`, `400 44px ${B}`].map(x => document.fonts.load(x))); } catch (e) {}
     const W = 1080, H = 1350, cv = document.createElement("canvas"); cv.width = W; cv.height = H;
     const g = cv.getContext("2d");
-    g.fillStyle = "#0B2A3B"; g.fillRect(0, 0, W, H);
-    g.fillStyle = "rgba(255,255,255,0.04)"; for (let x = 0; x < W; x += 90) g.fillRect(x, 0, 4, H);   // pool lane lines
-    let y = 130;
-    g.fillStyle = "#9FD6E8"; g.font = `600 44px ${D}`;
-    try { g.letterSpacing = "6px"; } catch (e) {}
-    g.fillText(("Daily Training Coach · " + niceDate(today())).toUpperCase(), 80, y);
+    const wide = (v) => { try { g.fontStretch = v; } catch (e) {} };
+    g.fillStyle = "#0C0F14"; g.fillRect(0, 0, W, H);
+    g.fillStyle = "#161B22"; g.beginPath(); (g.roundRect ? g.roundRect(48, 48, W - 96, H - 96, 44) : g.rect(48, 48, W - 96, H - 96)); g.fill();
+    g.strokeStyle = "#2A333F"; g.lineWidth = 2; g.stroke();
+    let y = 150;
+    const eyebrow = ("Daily Training Coach · " + niceDate(today())).toUpperCase();
+    g.fillStyle = "#B4BEC9"; let ez = 40; g.font = `700 ${ez}px ${B}`;
+    try { g.letterSpacing = "5px"; } catch (e) {}
+    while (g.measureText(eyebrow).width > W - 200 && ez > 26) { ez -= 2; g.font = `700 ${ez}px ${B}`; }
+    g.fillText(eyebrow, 100, y);
     try { g.letterSpacing = "0px"; } catch (e) {}
-    y += 50;
-    for (let x = 92, i = 0; x < W - 80; x += 34, i++) { g.fillStyle = i % 2 ? "#FFFFFF" : "#D1453B"; g.beginPath(); g.arc(x, y, 11, 0, Math.PI * 2); g.fill(); }  // lane rope
-    y += 320;
-    g.fillStyle = f.col; g.font = `700 ${f.word.length > 4 ? 270 : 330}px ${D}`; g.fillText(f.word, 70, y);
-    y += 100; g.fillStyle = "#F2F7FA"; g.font = `700 58px ${B}`; y = wrapText(g, f.head, 80, y, W - 160, 70);
-    if (f.sub) { y += 66; g.fillStyle = "#D6E6EE"; g.font = `400 46px ${B}`; y = wrapText(g, f.sub, 80, y, W - 160, 58); }
+    y += 44;
+    for (let x = 100; x < W - 100; x += 46) { g.fillStyle = "#C8F542"; g.fillRect(x, y, Math.min(36, W - 100 - x), 8); }
+    y += 300;
+    wide("expanded");
+    let size = 300; g.font = `900 ${size}px ${D}`;
+    while (g.measureText(f.word).width > W - 200 && size > 120) { size -= 10; g.font = `900 ${size}px ${D}`; }
+    g.fillStyle = f.col; g.fillText(f.word, 92, y);
+    wide("normal");
+    y += 100; g.fillStyle = "#F1F4F7"; g.font = `700 56px ${B}`; y = wrapText(g, f.head, 100, y, W - 200, 68);
+    if (f.sub) { y += 64; g.fillStyle = "#D3DAE2"; g.font = `400 44px ${B}`; y = wrapText(g, f.sub, 100, y, W - 200, 56); }
     if (f.lines.length) {
-      y += 20; g.font = `400 44px ${B}`;
-      for (const l of f.lines) { y += 64; if (y > H - 300) break; g.fillStyle = l.up ? "#7BE0A6" : "#D6E6EE"; g.fillText((l.up ? "↑ " : "• ") + l.t, 80, y); }
+      y += 20; g.font = `400 42px ${B}`;
+      for (const l of f.lines) { y += 62; if (y > H - 320) break; g.fillStyle = l.up ? "#C8F542" : "#D3DAE2"; g.fillText((l.up ? "↑ " : "• ") + l.t, 100, y); }
     }
-    g.fillStyle = "rgba(255,255,255,0.10)"; g.fillRect(80, H - 250, W - 160, 3);
-    g.fillStyle = "#F2F7FA"; g.font = `700 92px ${D}`; g.fillText(f.streak.toUpperCase(), 80, H - 140);
-    g.fillStyle = "#9FD6E8"; g.font = `600 44px ${D}`; g.fillText(SHARE_URL, 80, H - 70);
+    g.fillStyle = "#2A333F"; g.fillRect(100, H - 270, W - 200, 2);
+    wide("expanded"); g.fillStyle = "#F1F4F7"; g.font = `800 72px ${D}`;
+    let sz = 72; while (g.measureText(f.streak.toUpperCase()).width > W - 200 && sz > 40) { sz -= 4; g.font = `800 ${sz}px ${D}`; }
+    g.fillText(f.streak.toUpperCase(), 100, H - 168); wide("normal");
+    g.fillStyle = "#C8F542"; g.font = `700 44px ${B}`; g.fillText(SHARE_URL, 100, H - 100);
     return await new Promise((res) => cv.toBlob(res, "image/png"));
   }
   async function shareCard(kind) {
