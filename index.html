@@ -503,6 +503,14 @@ article.ex:nth-of-type(4n+4) .num { background: var(--neon-l); }
 .nb-result.stop { border-color: var(--rope); background: var(--stop-soft); font-weight: 700; }
 .nb-result ul { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; }
 .nb-result p { margin: 0; }
+.nb-ideas { display: grid; gap: 8px; }
+.nb-ideas[hidden] { display: none; }
+.nb-ideas .label { font-size: .95rem; }
+.nb-picks { display: flex; flex-wrap: wrap; gap: 8px; }
+.nb-pick { min-height: 48px; padding: 8px 14px; border-radius: 999px; border: 2px solid var(--field-line); background: var(--chip-bg, var(--surface));
+  color: var(--ink); font: 700 1.02rem/1.2 var(--body); cursor: pointer; text-align: left; }
+.nb-pick:active { transform: scale(.98); }
+.nb-pick:focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .nb-help summary { cursor: pointer; font-weight: 700; font-size: 1rem; padding: 6px 0; }
 .nb-help ul { margin: 4px 0 0; padding-left: 1.2rem; display: grid; gap: 4px; font-size: .98rem; }
 .nb-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
@@ -608,7 +616,8 @@ body { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }   /* roo
 <section class="nb-sheet" id="nbSheet" role="dialog" aria-label="Workout note" hidden>
   <div class="nb-head"><h3>Workout note</h3><button type="button" class="btn alt" id="nbMin" aria-label="Minimize note">Minimize</button></div>
   <p class="nb-ask">What do you want to change or add?</p>
-  <p class="nb-eg">Try: “swap leg press for goblet squat”, “3 sets of rows”, “rest 2 min on bench”, “use 50 on rows”, “add 2 sets of farmer carry”, “knee hurts on lunges”. Tap the mic on your keyboard to talk.</p>
+  <div class="nb-ideas" id="nbIdeas" hidden></div>
+  <p class="nb-eg" id="nbEg">Try: “swap leg press for goblet squat”, “3 sets of rows”, “rest 2 min on bench”, “use 50 on rows”, “add 2 sets of farmer carry”, “knee hurts on lunges”. Tap the mic on your keyboard to talk.</p>
   <textarea id="nbText" rows="3" aria-label="Your note" placeholder="Type or talk your note"></textarea>
   <div class="nb-btns">
     <button type="button" class="btn" id="nbApply">Change my workout</button>
@@ -616,7 +625,7 @@ body { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }   /* roo
   </div>
   <div class="nb-result" id="nbResult" aria-live="polite" hidden></div>
   <details class="nb-help"><summary>What I understand</summary><ul>
-    <li><b>Swap:</b> “swap A for B”, “do B instead of A”, “A is taken, do B”</li>
+    <li><b>Swap:</b> “swap A for B”, “do B instead of A”, “A is taken, do B”. Just “swap A” or “A is taken” shows moves for the same body part to tap.</li>
     <li><b>Sets:</b> “3 sets of A”, “one more set of A”, “one less set on A”</li>
     <li><b>Reps:</b> “10 reps on A”, “A for 12 reps”</li>
     <li><b>Rest:</b> “rest 2 min on A”, “90 sec rest” (no name = the exercise you're on)</li>

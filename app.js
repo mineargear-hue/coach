@@ -141,6 +141,8 @@
   const LEVEL_NAME = ["Beginner", "Intermediate", "Experienced"];
   // Related movements in the same body area, used when a joint rules out the planned one.
   const RELATED = {squat: ["hinge"], lunge: ["hinge", "squat"], hinge: ["squat"], hpush: ["hpull", "vpull"], vpush: ["hpull", "vpull"], vpull: ["hpull"], hpull: ["vpull"], core: [], carry: ["core"]};
+  // Body part for each movement, used when someone asks to change an exercise: ideas stay on the same body part.
+  const AREA = {squat: "legs", lunge: "legs", hinge: "legs", hpush: "chest", vpush: "shoulders", hpull: "back", vpull: "back", core: "core", carry: "core"};
   const has = (g) => (P().goals || []).includes(g);
   function eqSet() {
     const p = P(), s = new Set(["w"]);
@@ -349,7 +351,7 @@
     if (!nc.length) return false;
     let touched = false;
     const find = (ex) => items.find(it => baseName(it.name).toLowerCase() === baseName(ex || "").toLowerCase());
-    const mk = (name, sets, reps, from) => { const L = BYNAME[name] || {}; return {name, sets, reps, base: 60, main: false, side: !!L.side || /per side|per leg/.test(reps), noteSets: true, noteFrom: from, noteAdded: !from}; };
+    const mk = (name, sets, reps, from) => { const L = BYNAME[name] || {}; return {name, pat: L.pat, sets, reps, base: 60, main: false, side: !!L.side || /per side|per leg/.test(reps), noteSets: true, noteFrom: from, noteAdded: !from}; };
     nc.forEach(c => {
       if (c.type === "add") { if (!c.to || find(c.to)) return; items.push(mk(c.to, c.sets || 3, c.reps || "10")); touched = true; return; }
       const it = find(c.ex); if (!it) return;
@@ -357,10 +359,11 @@
       if (c.type === "swap" && c.to && !find(c.to)) {
         if (done) {   // sets already logged stay under the old name; the rest move to the new exercise
           const left = Math.max(1, it.sets - done); it.sets = done; it.noteSets = true;
-          items.splice(items.indexOf(it) + 1, 0, mk(c.to, c.sets || left, c.reps || it.reps, it.name));
+          const nx = mk(c.to, c.sets || left, c.reps || it.reps, it.name); nx.pat = nx.pat || it.pat;
+          items.splice(items.indexOf(it) + 1, 0, nx);
         } else {
           const L = BYNAME[c.to] || {};
-          it.noteFrom = it.name; it.name = c.to; it.side = !!L.side; it.main = false;
+          it.noteFrom = it.name; it.name = c.to; it.side = !!L.side; it.main = false; if (L.pat) it.pat = L.pat;
           if (c.reps) it.reps = c.reps; if (c.sets) { it.sets = c.sets; it.noteSets = true; }
         }
         touched = true;
@@ -384,6 +387,25 @@
       }));
     return out;
   }
+
+  // ---- swap ideas: same body part only (1.7.0) ----
+  // Same movement first (leg press → goblet squat), then the rest of that body part (→ hip thrust). Never another
+  // body part. Uses the same rules as the plan: their equipment, level, ongoing joints, age, and today's sore joints.
+  function patOf(name, view) {
+    const r = view && view.rows.find(x => x.name === name);
+    return (r && r.pat) || (BYNAME[baseName(name)] || {}).pat || null;
+  }
+  function swapOptions(name, view, max) {
+    const pat = patOf(name, view); if (!pat) return [];
+    const area = AREA[pat], inSession = new Set((view ? view.rows : []).map(r => baseName(r.name)));
+    const limit = {}; Object.entries((view && view.joints) || {}).forEach(([j, sev]) => { if (sev === "sore") limit[j] = 0; else if (sev === "mild") limit[j] = 1; });
+    const opts = Object.keys(limit).length ? {limit} : {};
+    const pats = [pat, ...Object.keys(AREA).filter(p => p !== pat && AREA[p] === area)], out = [];
+    pats.forEach(p => candidates(p, opts).forEach(x => { if (x.name !== baseName(name) && !inSession.has(x.name) && !out.includes(x.name)) out.push(x.name); }));
+    return out.slice(0, max || 4);
+  }
+  const areaOf = (name, view) => AREA[patOf(name, view)] || null;
+  const currentLift = (view) => { const lifts = view ? view.rows.filter(r => !r.fixed) : []; return (lifts.find(r => loggedCount(sessions[view.id], r.name) < r.sets) || lifts[0] || {}).name || null; };
 
   // ---- the parser ----
   const NUMW = {zero: 0, one: 1, a: 1, an: 1, single: 1, two: 2, couple: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
@@ -432,7 +454,7 @@
   // Returns {changes, misses:[clause], stop}
   function parseNote(text, view) {
     const lifts = view.rows.filter(r => !r.fixed), names = lifts.map(r => r.name);
-    const out = {changes: [], misses: [], notFound: [], stop: STOP_RE.test(text)};
+    const out = {changes: [], misses: [], notFound: [], stop: STOP_RE.test(text), ask: null};
     if (out.stop) return out;
     const t = normalize(text), scope = ALWAYS_RE.test(t) ? "always" : "today";
     const current = (lifts.find(r => loggedCount(sessions[view.id], r.name) < r.sets) || lifts[0] || {}).name;
@@ -447,7 +469,8 @@
     const clauses = t.split(/\s*(?:[.;,!?]|\band then\b|\bthen\b|\balso\b|\band\b(?= (?:swap|switch|replace|skip|drop|add|rest|use|do|go|only|just|\d)))\s*/).map(s => s.trim()).filter(s => s.length > 1);
     clauses.forEach(c0 => {
       const c = c0.replace(ALWAYS_RE, "").replace(/\b(please|today|for today|now|instead)\b(?! of)/g, " ").replace(/\s+/g, " ").trim();
-      let m, before = out.changes.length;
+      let m, before = out.changes.length, askBefore = out.ask;
+      const ask = (ex) => { out.ask = {ex, area: areaOf(ex, view), options: swapOptions(ex, view)}; };
       const push = (ch) => { if (ch.type !== "add" && !ch.ex) return; out.changes.push(Object.assign({scope: ch.type === "weight" ? "today" : scope}, ch));
         if ((ch.type === "swap" || ch.type === "add") && ch.to && !names.includes(ch.to)) names.push(ch.to); if (ch.to) lastEx = ch.to; };
       const setsIn = (s) => { const x = s.match(/(\d+)\s*sets?/); return x ? Math.min(6, Math.max(1, +x[1])) : null; };
@@ -462,7 +485,11 @@
       } else if ((m = c.match(/(.+?)\s+(?:is|are|'s)\s+(?:taken|busy|occupied|in use|broken|out of order|not available|full)\s*,?\s*(?:so\s+)?(?:i'?ll\s+)?(?:do|use|try|go with|swap (?:it )?(?:for|to)|gimme|give me)?\s*(.*)/))) {
         const ex = exOf(m[1]), to = m[2] ? newExName(strip(m[2])) : null;
         if (ex && to && to !== ex) push({type: "swap", ex, to, sets: setsIn(m[2]), reps: repsIn(m[2])});
-        else if (ex) push({type: "cue", ex, cue: "Equipment busy. Tell me what you'll do instead, e.g. “swap it for …”"});
+        else if (ex) ask(ex);
+      }
+      // "swap leg press" / "change this one" with nothing to swap to → offer moves for the same body part
+      else if ((m = c.match(/^(?:swap|switch|replace|change|sub(?:stitute)?|trade)(?:\s+(?:out\s+)?(.+))?$/)) && !/\d|\b(sets?|reps?|rest|weight)\b/.test(m[1] || "")) {
+        const ex = exOf(m[1] || "", !m[1] || /^(it|this( one)?|that( one)?)$/.test(m[1])); if (ex) ask(ex);
       }
       // skip
       else if ((m = c.match(/^(?:skip|skipping|drop|remove|cut|leave out|no more)\s+(?:the\s+)?(.+)/))) { push({type: "skip", ex: exOf(m[1], /^(it|this( one)?)$/.test(m[1]))}); }
@@ -506,6 +533,7 @@
         if (ex) push({type: "reps", ex, reps: rp});
       }
       // something hurts → reminder + about 20% lighter today
+      if (out.ask !== askBefore) return;
       if (out.changes.length === before && HURT_RE.test(c)) {
         const on = c.match(/\b(?:on|with|during|doing|from|in)\s+(?:the\s+|my\s+)?([a-z][a-z -]+)$/);
         const nf = out.notFound.length, ex = on ? (bestName(on[1], names) || (out.notFound.push(on[1]), null)) : (lastEx || current);
@@ -553,7 +581,7 @@
     items.forEach(it => {
       t += it.ramp;
       rows.push({name: it.name, sets: it.sets, reps: it.reps, rest: it.rest, start: t / 60, ramp: it.ramp / 60, main: it.main,
-        stepFrom: it.stepFrom, jointFrom: it.jointFrom, jointLoad: it.jointLoad, jointWhy: it.jointWhy,
+        pat: it.pat || (BYNAME[it.name] || {}).pat, stepFrom: it.stepFrom, jointFrom: it.jointFrom, jointLoad: it.jointLoad, jointWhy: it.jointWhy,
         noteFrom: it.noteFrom, noteCue: it.noteCue, noteW: it.noteW, notePct: it.notePct, noteAdded: it.noteAdded});
       t += it.sets * workSec(it) + (it.sets - 1) * it.rest + CHANGE;
     });
@@ -1072,7 +1100,7 @@
     const id = sid(settings.cycle, week, sp.key), body = sessions[id] || {};
     const mode = sessionMode(sp, body), joints = isTodaySession(sp, body) ? jointsToday() : {};
     const rows = buildSession(week, sp, mode, joints, noteChangesFor(sp, body, id), body);
-    curView = {sp, id, mode, rows, targets: {}};
+    curView = {sp, id, mode, rows, joints, targets: {}};
     $("sessionEyebrow").textContent = mode === "recovery" ? `Week ${week} · Recovery day` : mode === "stop" ? `Week ${week} · No training today`
       : `Week ${week} · ${WEEK_NOTE[week]} · lifting ends at ${clock(rows.end)}${mode === "yellow" ? " · yellow day" : mode === "light" ? " · light version" : ""}`;
     $("sessionTitle").textContent = sp.title;
@@ -2019,11 +2047,26 @@
       return `<li class="nb-item${n.status === "undone" ? " undone" : ""}">${tag}<q>${esc(n.text)}</q><span class="nb-meta">${esc(n.time || "")}${n.reply ? " · " + esc(n.reply) : ""}</span>${ch}
         ${n.status === "applied" ? `<button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>` : n.status === "undone" ? `<button type="button" class="ghost" data-nbredo="${esc(id)}">Put them back</button>` : ""}</li>`;
     }).join("") : `<li class="nb-meta">No notes yet for this session.</li>`;
+    if (!$("nbSheet").hidden) renderNoteIdeas();
+  }
+  // Ideas and examples follow the exercise you're on, so a chest day never suggests leg moves.
+  const AREA_TXT = {legs: "legs", chest: "chest", shoulders: "shoulders", back: "back", core: "core"};
+  const HURT_EG = {legs: "knee", chest: "shoulder", shoulders: "shoulder", back: "elbow", core: "lower back"};
+  const pickBtn = (ex, to) => `<button type="button" class="nb-pick" data-nbex="${esc(ex)}" data-nbto="${esc(to)}">${esc(to)}</button>`;
+  function renderNoteIdeas() {
+    const box = $("nbIdeas"), eg = $("nbEg"); if (!box || !eg) return;
+    const cur = currentLift(curView), opts = cur ? swapOptions(cur, curView, 3) : [], area = cur ? areaOf(cur, curView) : null;
+    box.hidden = !opts.length;
+    box.innerHTML = opts.length ? `<span class="label">Tap to swap ${esc(cur)}${area ? ` (${AREA_TXT[area]})` : ""}</span><div class="nb-picks">${opts.map(o => pickBtn(cur, o)).join("")}</div>` : "";
+    if (!cur) return;
+    const egs = [opts[0] ? `swap ${cur} for ${opts[0]}` : null, `3 sets of ${cur}`, `rest 2 min on ${cur}`, opts[1] ? `add 2 sets of ${opts[1]}` : null,
+      area ? `${HURT_EG[area]} hurts on ${cur}` : null].filter(Boolean).map(x => "“" + esc(x.toLowerCase()) + "”");
+    eg.innerHTML = `Try: ${egs.join(", ")}. Tap the mic on your keyboard to talk.`;
   }
   function openNotes() {
     $("nbSheet").hidden = false; document.body.classList.add("nb-open"); $("nbBubble").setAttribute("aria-expanded", "true");
     const ta = $("nbText"); if (!ta.value && nbDraft) ta.value = nbDraft;
-    renderNotes(); setTimeout(() => { try { ta.focus({preventScroll: true}); } catch (e) { ta.focus(); } }, 50);
+    renderNotes(); renderNoteIdeas(); setTimeout(() => { try { ta.focus({preventScroll: true}); } catch (e) { ta.focus(); } }, 50);
   }
   function closeNotes() { $("nbSheet").hidden = true; document.body.classList.remove("nb-open"); $("nbBubble").setAttribute("aria-expanded", "false"); try { $("nbText").blur(); } catch (e) {} }
   function nbShow(cls, html) {
@@ -2045,6 +2088,11 @@
     const id = "note-" + Date.now(), n = newNote(text), res = parseNote(text, curView);
     if (res.stop) { n.reply = "Safety stop"; await saveNoteDoc(id, n); clearDraft(); nbShow("stop", `<p>${esc(STOP_MSG)}</p>`); return; }
     if (!apply) { await saveNoteDoc(id, n); clearDraft(); nbShow("ok", "<p>Saved. Nothing in the workout changed.</p>"); return; }
+    // "swap leg press" with nothing named → tap a move for the same body part; nothing changes until they pick one
+    const askHtml = res.ask ? (res.ask.options.length
+      ? `<p>Pick one for <b>${esc(res.ask.ex)}</b>${res.ask.area ? ` (same body part: ${AREA_TXT[res.ask.area]})` : ""}:</p><div class="nb-picks">${res.ask.options.map(o => pickBtn(res.ask.ex, o)).join("")}</div>`
+      : `<p>Nothing else for that body part fits your equipment today. Tell me what you'll do: “swap ${esc(res.ask.ex.toLowerCase())} for …”</p>`) : "";
+    if (res.ask && !res.changes.length) { nbShow("ok", askHtml); return; }
     n.changes = res.changes; n.status = res.changes.length ? "applied" : "saved";
     n.reply = res.changes.length ? (res.misses.length ? "Part of it changed" : "Done") : "Saved as a note";
     await saveNoteDoc(id, n); clearDraft();
@@ -2052,7 +2100,7 @@
     const nf = [...new Set(res.notFound)].filter(Boolean);
     const miss = (nf.length ? `<p>I couldn't find <b>${nf.map(esc).join("</b>, <b>")}</b> in this session. Use a word from the exercise name on the card.</p>` : "") + (res.misses.length ? `<p>I didn't understand: <b>${res.misses.map(esc).join("”, “")}</b>. Open “What I understand” below for the wording I know.</p>` : "");
     nbShow(res.changes.length ? "ok" : "miss", res.changes.length
-      ? `<ul>${res.changes.map(c => `<li>${esc(describeChange(c))}</li>`).join("")}</ul>${miss}<p>Your workout is already updated. Tap Minimize and keep going.</p><button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>`
+      ? `<ul>${res.changes.map(c => `<li>${esc(describeChange(c))}</li>`).join("")}</ul>${miss}${askHtml}<p>Your workout is already updated. Tap Minimize and keep going.</p><button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>`
       : `<p>Saved as a note, but nothing in the workout changed.</p>${miss}`);
   }
   async function setNoteStatus(id, status) {
@@ -2069,12 +2117,13 @@
     const t = e.target.closest("button"); if (!t) return;
     if (t.dataset.nbundo) setNoteStatus(t.dataset.nbundo, "undone");
     if (t.dataset.nbredo) setNoteStatus(t.dataset.nbredo, "applied");
+    if (t.dataset.nbto) { $("nbText").value = `swap ${t.dataset.nbex} for ${t.dataset.nbto}`; applyNote(true); }
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("nbSheet").hidden) closeNotes(); });
   if (globalThis.__COACH_TEST__) {   // test hook only; never set on the published page
     globalThis.__coach = {setProfile: (p) => { profile = p; }, setCheckin: (c) => { checkins[ciId(today())] = c; }, plan, buildSession, budget, level, scoreCheckin, cardioKind,
       setSessions: (x) => { sessions = x; }, targetFor, liftsFor, judge, incFor,
-      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard, parseNote, normalize};
+      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard, parseNote, normalize, swapOptions, AREA};
     return;
   }
   init();
