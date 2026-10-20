@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#0c0f14">
+<meta name="theme-color" content="#17133a">
 <meta name="description" content="A personal training plan built from your answers, adjusted every morning.">
 <title>Daily Training Coach</title>
 <link rel="manifest" href="manifest.webmanifest">
@@ -409,59 +409,68 @@ body.typing .tb-restword, body.typing .tb-resttime { font-size: 1.6rem; }
 .pdates { display: flex; justify-content: space-between; gap: 8px; font-size: .9rem; color: var(--muted); flex-wrap: wrap; }
 .nudge p { margin: 0; }
 
-/* ===== Visual identity: "Night Session" (theme 3, picked Oct 19) =====
-   Always dark: near-black ground, charcoal cards, one lime accent for "go" and progress,
-   amber for easy days, coral for rest/stop. Wide Archivo headlines, Atkinson Hyperlegible body
-   (built for low-vision reading). Large print stays. Overrides the Lane Line tokens above. */
+/* ===== Visual identity: "Arcade" (colorful theme 6, picked Oct 19) =====
+   Dark indigo, neon accents: yellow for the main button, lime for go and progress, cyan for links and Watch,
+   magenta for streaks, pink-red for rest/stop. Rubik heavy headlines, Atkinson Hyperlegible body.
+   Night Session is saved in themes/night-session.css. Overrides the Lane Line tokens above. */
 html:root:not([data-theme="never"]) {
   color-scheme: dark;
-  --bg: #0c0f14; --surface: #161b22; --ink: #f1f4f7; --muted: #b4bec9; --line: #2a333f;
-  --accent: #c8f542; --accent-soft: #232e10; --good: #c8f542; --warn: #ffb547;
-  --action: #ff8a4c; --action-ink: #160803; --hero: #161b22; --hero-ink: #f1f4f7; --rope: #ff7a6b;
-  --caution: #ffb547; --caution-soft: #33270f; --good-soft: #232e10; --stop-soft: #3a1a17;
-  --field-line: #4a5666; --chip-bg: #262e39;
-  --display: "Archivo", "Arial Black", sans-serif;
+  --bg: #17133a; --surface: #241e55; --ink: #f4f2ff; --muted: #c9c4ee; --line: #352d73;
+  --accent: #ffe53d; --accent-soft: #3a3466; --good: #9bff4a; --warn: #ffe53d;
+  --action: #3df2ff; --action-ink: #17133a; --hero: #241e55; --hero-ink: #f4f2ff; --rope: #ff6b8b;
+  --caution: #ffe53d; --caution-soft: #3b3550; --good-soft: #2c3d47; --stop-soft: #4a2148;
+  --field-line: #6157b3; --chip-bg: #352d73; --neon-c: #3df2ff; --neon-m: #ff4fd8; --neon-y: #ffe53d; --neon-l: #9bff4a;
+  --display: "Rubik", "Arial Black", sans-serif;
   --body: "Atkinson Hyperlegible", system-ui, sans-serif;
 }
 body { background: var(--bg); color: var(--ink); font-family: var(--body); }
 h1, h2, h3, .exname, .ptitle, .light b, .tb-restword, .days button b, .hero-eyebrow, .num {
-  font-family: var(--display); font-stretch: 112%; font-weight: 800; letter-spacing: 0; }
+  font-family: var(--display); font-weight: 900; letter-spacing: 0; font-stretch: normal; }
 h1, h2, h3, .exname { overflow-wrap: anywhere; }
-.hero { background: var(--surface); border: 1px solid var(--line); background-image: none; }
-.hero h1 { font-stretch: 125%; font-weight: 900; font-size: 2.3rem; line-height: 1; }
-.hero-eyebrow { color: var(--muted); font-size: .9rem; letter-spacing: .12em; font-weight: 700; }
-.hero .sub, .plansum { color: #d3dae2; }
+.hero { background: var(--surface); border: 2px solid var(--neon-m); background-image: none; box-shadow: 0 0 26px -10px var(--neon-m); }
+.hero h1 { font-size: 2.6rem; line-height: 1; }
+.hero-eyebrow { color: var(--neon-c); font-size: .95rem; letter-spacing: .1em; font-weight: 800; }
+.hero .sub, .plansum { color: #dcd8f7; }
 .hero .ghost { color: var(--ink); border-color: var(--field-line); }
-.lane { height: 6px; border-radius: 3px; background: repeating-linear-gradient(90deg, var(--accent) 0 28px, transparent 28px 36px); }
-.sessionhead h2 { font-size: 2rem; }
-.exname { font-size: 1.55rem; line-height: 1.1; }
-.checkin h3, .card h2, .weekcard h3, .ptitle { font-size: 1.4rem; }
-.adjust h3 { font-size: 1.25rem; }
-.light b { font-size: 1.9rem; }
-.days button b { font-size: 1.2rem; }
-.ex, .card, .checkin, .weekcard, .savebar, .adjust, .timerbar { border-width: 1px; border-radius: 20px; }
-.ex.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
-.timerbar { border-color: var(--line); box-shadow: 0 10px 28px -14px rgba(0,0,0,.9); }
+.lane { height: 8px; border-radius: 4px; background: linear-gradient(90deg, var(--neon-c) 0 25%, var(--neon-m) 25% 50%, var(--neon-y) 50% 75%, var(--neon-l) 75% 100%); }
+.sessionhead h2 { font-size: 2.2rem; }
+.exname { font-size: 1.7rem; line-height: 1.1; }
+.checkin h3, .card h2, .weekcard h3 { font-size: 1.6rem; }
+.ptitle { font-size: 1.5rem; }
+.adjust h3 { font-size: 1.4rem; }
+.light b { font-size: 2.1rem; }
+.days button b { font-size: 1.35rem; }
+.ex, .card, .checkin, .weekcard, .savebar, .adjust, .timerbar { border-width: 0; border-radius: 22px; }
+.ex.fixed { border: 2px dashed var(--line); }
+.ex.active { box-shadow: 0 0 0 2px var(--neon-c), 0 0 22px -6px var(--neon-c); }
+.timerbar { background: var(--surface); box-shadow: 0 10px 28px -12px rgba(0,0,0,.8), inset 0 0 0 2px var(--line); }
 .field { border-color: var(--field-line); background: var(--bg); }
-.field input { font-family: var(--mono); }
-.num { background: var(--chip-bg); color: var(--ink); font-weight: 800; }
-.btn { border-color: var(--accent); background: var(--accent); color: #0c0f14; font-weight: 700; border-radius: 14px; }
-.btn.alt { background: var(--surface); color: var(--ink); border-color: var(--field-line); }
-.seg button, .days button, .ci-opt, .ci-pill, .tick, .ghost, .xdone, .xst, .chips button { border-color: var(--field-line); }
-.seg button[aria-pressed="true"], .ci-pill:has(input:checked), .wk-today { color: #0c0f14; }
-.days button[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); box-shadow: inset 0 0 0 1px var(--accent); }
-.tick[aria-pressed="true"], .xdone[aria-pressed="true"] { color: #0c0f14; }
-.target { border-width: 1px; background: var(--bg); border-color: var(--field-line); }
-.target.up { border-color: var(--good); } .target.down { border-color: var(--warn); }
-.light { border-width: 1px; }
-.light .lamp { box-shadow: 0 0 18px -2px currentColor, inset 0 -4px 0 rgba(0,0,0,.25); }
+.num { color: #17133a; border-radius: 14px; }
+article.ex:nth-of-type(4n+1) .num { background: var(--neon-c); }
+article.ex:nth-of-type(4n+2) .num { background: var(--neon-m); }
+article.ex:nth-of-type(4n+3) .num { background: var(--neon-y); }
+article.ex:nth-of-type(4n+4) .num { background: var(--neon-l); }
+.btn { border-color: var(--accent); background: var(--accent); color: #17133a; font-weight: 700; border-radius: 16px; box-shadow: 0 0 20px -6px var(--accent); }
+.btn.alt { background: var(--surface); color: var(--ink); border-color: var(--field-line); box-shadow: none; }
+.seg button, .days button, .ci-opt, .ci-pill, .tick, .ghost, .xdone, .xst, .chips button, .chip { border-color: var(--field-line); }
+.seg button[aria-pressed="true"], .ci-pill:has(input:checked), .wk-today { color: #17133a; }
+.days button[aria-pressed="true"] { border-color: var(--neon-c); background: var(--accent-soft); box-shadow: 0 0 0 1px var(--neon-c); }
+.tick[aria-pressed="true"], .xdone[aria-pressed="true"] { color: #17133a; box-shadow: 0 0 14px -4px var(--good); }
+.target { border-width: 2px; background: var(--bg); border-color: var(--field-line); }
+.target.up { border-color: var(--good); } .target.down { border-color: var(--rope); }
+.target.down .tgt-why { color: var(--rope); }
+.light { border-width: 2px; }
+.light .lamp { box-shadow: 0 0 22px 0 currentColor, inset 0 -4px 0 rgba(0,0,0,.25); }
 .light.green .lamp { color: var(--good); } .light.yellow .lamp { color: var(--caution); } .light.red .lamp, .light.stop .lamp { color: var(--rope); }
 .bar { background: var(--chip-bg); }
-.wk-cardio, .cue { color: var(--accent); }
-.chip { border-color: var(--field-line); }
-.ptitle { font-size: 1.25rem; font-stretch: 100%; }
+.clock { color: var(--neon-c); }
+.wk-cardio, .cue { color: var(--neon-c); }
+.watch .play { color: var(--action); }
+.chip .play { color: var(--neon-c); }
+.ptitle { font-stretch: normal; }
 .su .field input, #suName { font-family: var(--body); }
-.field input::placeholder { color: #8b97a4; opacity: 1; }
+.field input::placeholder { color: #9a94c8; opacity: 1; }
+.progresscard summary::after { color: var(--neon-c); }
 </style>
 </head>
 <body>
