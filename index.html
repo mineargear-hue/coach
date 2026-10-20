@@ -263,6 +263,23 @@ body { background: var(--bg); }
 .chip .play { color: var(--action); font-size: 1rem; }
 .chip b { font-size: 1.1rem; }
 .chip span:not(.play) { color: var(--muted); font-size: 1rem; }
+/* Cardio + stretch logging on the cards after the lifts */
+.track { display: grid; gap: 12px; border-top: 2px solid var(--line); padding-top: 14px; }
+.track .label { font-size: .95rem; }
+.xgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(8.5rem, 1fr)); gap: 10px; }
+.xgrid .field input { font-size: 1.5rem; }
+.xgrid .field span { white-space: nowrap; }
+.xdone { justify-self: stretch; font: 700 1.25rem var(--body); min-height: 3.2rem; border-radius: 14px; border: 2px solid var(--line);
+  background: var(--surface); color: var(--ink); cursor: pointer; }
+.xdone[aria-pressed="true"] { background: var(--good); border-color: var(--good); color: var(--surface); }
+.xst-list { display: flex; flex-wrap: wrap; gap: 10px; }
+.xst { font: 600 1.1rem var(--body); min-height: 3rem; padding: 8px 14px; border-radius: 12px; border: 2px solid var(--line);
+  background: var(--surface); color: var(--ink); cursor: pointer; text-align: left; }
+.xst[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--good); }
+.xst .box { display: inline-block; width: 1.4rem; color: var(--good); font-weight: 700; }
+.xhint { margin: 0; font-size: 1rem; color: var(--muted); }
+.ex.fixed.logged { border-style: solid; border-color: var(--good); }
+.wk-extra { margin: 0; font-size: 1.05rem; font-weight: 600; }
 .note { border-top: 2px solid var(--line); }
 @media (max-width: 420px) {
   .hero h1 { font-size: 2.4rem; }

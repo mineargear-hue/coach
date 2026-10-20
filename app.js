@@ -24,6 +24,7 @@
   let settings = {kind: "settings", cycle: 1};
   let sessions = {};                  // "c<cycle>-w<week>-<key>" -> logged sets
   let checkins = {};                  // "checkin-YYYY-MM-DD" -> morning readings
+  let extras = {};                    // "extra-YYYY-MM-DD" -> cardio, finisher and stretching logged that day
   let week = 1, dayKey = null, store = null, pendingId = null, saveTimer = null;
   let editingProfile = false, ciEditing = false, confirmingReset = false;
   let curCardio = "swim", afterLift = "stretching, then cardio", afterLiftSay = "Stretch next.";
@@ -346,8 +347,8 @@
     const mob = mobilityFor(sp, B.mob, joints);
     if (mode === "stop") { rows.end = 0; return rows; }
     if (mode === "recovery") {
-      rows.push({fixed: true, start: 0, name: "Mobility: easy stretching", meta: "10 min · " + mob + " · Slow nose breathing 1 min"});
-      rows.push({fixed: true, start: 10, name: ck === "swim" ? "Swim, freestyle" : ck === "walk" ? "Easy walk" : cardioName,
+      rows.push({fixed: true, start: 0, track: "mobility", plan: 10, name: "Mobility: easy stretching", meta: "10 min · " + mob + " · Slow nose breathing 1 min"});
+      rows.push({fixed: true, start: 10, track: "cardio", ctype: ck, plan: 25, eff: 3, name: ck === "swim" ? "Swim, freestyle" : ck === "walk" ? "Easy walk" : cardioName,
         meta: "20–30 min, " + zoneTxt() + ". Easy is the point today."});
       rows.end = 0; return rows;
     }
@@ -371,16 +372,16 @@
     const fin = mode === "light" || (joints && joints.k === "sore") ? 0 : B.fin;
     let at = liftEnd;
     if (fin) {
-      rows.push({fixed: true, start: at, name: "Fat-burn finisher", meta: fin + " min · " + (steady
+      rows.push({fixed: true, start: at, track: "finisher", plan: fin, eff: steady ? 5 : 7, name: "Fat-burn finisher", meta: fin + " min · " + (steady
         ? `${machine} at a steady, comfortable push, no all-out effort`
         : `${machine}: 6 rounds of 30 sec hard, 30 sec easy. Hard means 7 out of 10, never all-out. Keep breathing.`)});
       at += fin;
     }
-    rows.push({fixed: true, start: at, name: "Mobility: stretch what you trained", meta: B.mob + " min · " + mob});
+    rows.push({fixed: true, start: at, track: "mobility", plan: B.mob, name: "Mobility: stretch what you trained", meta: B.mob + " min · " + mob});
     at += B.mob;
     if (B.cardio) {
       rows.push({fixed: true, start: at, name: "Water break, get to " + (ck === "walk" ? "your walk" : "the " + (ck === "swim" ? "pool" : cardioName.toLowerCase())), meta: B.change + " min"});
-      rows.push({fixed: true, start: at + B.change, name: cardioName, meta: B.cardio + " min · " + zoneTxt() + "."
+      rows.push({fixed: true, start: at + B.change, track: "cardio", ctype: ck, plan: B.cardio, eff: 5, name: cardioName, meta: B.cardio + " min · " + zoneTxt() + "."
         + (ck === "swim" && joints && joints.k === "sore" ? " Use a pull buoy if kicking bothers the knee." : "")});
     }
     afterLift = [fin ? `${fin}-minute finisher` : "", `${B.mob} minutes of stretching`, B.cardio ? cardioName.toLowerCase() : ""].filter(Boolean).join(", then ");
@@ -754,6 +755,13 @@
       return `<button type="button" id="day-${s.key}" aria-pressed="${s.key === dayKey}" data-k="${s.key}"><span class="label">Day ${i + 1}</span><b>${esc(s.title)}</b>${mark}</button>`;
     }).join("");
   }
+  function extraLine() {
+    const xs = Object.values(extras).filter(x => x && x.week === week && (x.cycle || 1) === settings.cycle);
+    const cMin = xs.reduce((a, x) => a + (x.cardio && typeof x.cardio.min === "number" ? x.cardio.min : 0), 0);
+    const fins = xs.filter(x => x.finisher && (x.finisher.done || x.finisher.min)).length;
+    const st = xs.filter(x => x.mobility && (x.mobility.done || x.mobility.min || (x.mobility.stretches || []).length)).length;
+    return `<p class="wk-extra">Cardio this week: <b>${cMin} min</b> · Finishers: <b>${fins}</b> · Stretching: <b>${st} of ${plan().length} days</b></p>`;
+  }
   function renderWeekCard() {
     const sp = plan(), done = sp.filter(s => hasData(sessions[sid(settings.cycle, week, s.key)])).length;
     const st = weekStart(week), next = sp.find(s => !hasData(sessions[sid(settings.cycle, week, s.key)]));
@@ -762,9 +770,110 @@
     const cur = currentProgramWeek();
     $("weekCard").innerHTML = `<span class="label">This week</span><h3>Week ${week}: ${done} of ${sp.length} done</h3>
       <p class="wk-musts">${st ? "Started " + esc(niceDate(st)) + ". " : ""}${next ? "Next up: " + esc(next.title) + "." : week < 4 ? "Week complete. Rest, then start Week " + (week + 1) + "." : "Cycle complete. Start a new cycle below."} Core moves this week: ${Math.min(abs, 3)} of 3.</p>
+      ${extraLine()}
       <p class="meta">Space your days out when you can: no more than 2 hard days in a row, and take at least 1 full rest day a week.</p>
       ${cur !== week ? `<button type="button" class="btn alt" id="goCurrentWeek" data-goweek="${cur}">Go to this week (Week ${cur})</button>` : ""}`;
   }
+  // ================= cardio + stretch logging =================
+  // One record per calendar day, "extra-YYYY-MM-DD", kept apart from sessions so logging a recovery-day
+  // walk never marks a lifting day done. Existing data is untouched.
+  const XID = (d) => "extra-" + d;
+  function xDateFor(sp, body) { return body && body.date ? body.date : isTodaySession(sp, body) ? today() : null; }
+  function xPart(date, part) { const e = date && extras[XID(date)]; return (e && e[part]) || {}; }
+  const xVal = (v) => v != null ? esc(v) : "";
+  const stretchNames = (meta) => String(meta).split(" · ").slice(1).map(it => it.replace(/\s+(×\d+.*|\d+\s*sec.*)$/, "").trim()).filter(Boolean);
+  const DIST_UNIT = {swim: "laps", stairs: "floors", rower: "meters", bike: "miles", "incline walk": "miles", walk: "miles"};
+  function trackHtml(r, date, sp) {
+    if (!date) return `<div class="track"><p class="xhint">Log this on the day you do it.</p></div>`;
+    const x = xPart(date, r.track);
+    const attrs = `data-part="${r.track}" data-date="${date}" data-day="${esc(sp.key)}" data-plan="${r.plan}"${r.ctype ? ` data-ctype="${esc(r.ctype)}"` : ""}`;
+    const f = (k, unit, ph, opt = "") => `<label class="field"><input data-x="1" data-xk="${k}" type="number" inputmode="${unit === "miles" ? "decimal" : "numeric"}" enterkeyhint="next" min="0" ${opt} placeholder="${ph}" value="${xVal(x[k])}" aria-label="${esc(r.name)} ${unit}"><span>${unit}</span></label>`;
+    if (r.track === "mobility") {
+      const done = new Set(x.stretches || []);
+      const list = stretchNames(r.meta).map(n => `<button type="button" class="xst" data-name="${esc(n)}" aria-pressed="${done.has(n)}"><span class="box">${done.has(n) ? "✓" : "○"}</span>${esc(n)}</button>`).join("");
+      return `<div class="track" ${attrs}><span class="label">Log your stretching: tap each one you did</span>
+        <div class="xst-list">${list}</div>
+        <div class="xgrid">${f("min", "min", r.plan)}</div>
+        <button type="button" class="xdone" aria-pressed="${!!x.done}">${x.done ? "✓ Stretching done" : "Mark stretching done"}</button></div>`;
+    }
+    if (r.track === "finisher") {
+      return `<div class="track" ${attrs}><span class="label">Log your finisher</span>
+        <div class="xgrid">${f("min", "min", r.plan)}${f("effort", "effort /10", r.eff, 'max="10"')}</div>
+        <button type="button" class="xdone" aria-pressed="${!!x.done}">${x.done ? "✓ Finisher done" : "Mark finisher done"}</button></div>`;
+    }
+    const unit = DIST_UNIT[r.ctype] || "miles", hr = hrNumbersOk();
+    return `<div class="track" ${attrs}><span class="label">Log your ${({swim: "swim", bike: "bike ride", rower: "rowing", stairs: "stair climber", "incline walk": "incline walk", walk: "walk"})[r.ctype] || "cardio"}</span>
+      <div class="xgrid">${f("min", "min", r.plan)}${f("dist", unit, "–", unit === "miles" ? 'step="0.1"' : "")}${f("effort", "effort /10", r.eff, 'max="10"')}${hr ? f("hr", "avg HR", "–") : ""}</div>
+      <p class="xhint">Effort ${r.eff} out of 10 is the goal.${hr ? " Average heart rate from your watch, if it recorded one." : ""}</p>
+      <button type="button" class="xdone" aria-pressed="${!!x.done}">${x.done ? "✓ Cardio done" : "Mark cardio done"}</button></div>`;
+  }
+  let xTimer = null, xPending = null;
+  const xMeta = (box) => ({cycle: settings.cycle, week, day: box.dataset.day});
+  function editExtra(date, part, patch, meta) {
+    const id = XID(date);
+    const e = extras[id] ? JSON.parse(JSON.stringify(extras[id])) : {kind: "extra", date};
+    Object.assign(e, meta);
+    e[part] = Object.assign({}, e[part], patch);
+    e.savedAt = Date.now();
+    extras[id] = e; xPending = id;
+    setStatus("Saving…");
+    clearTimeout(xTimer);
+    xTimer = setTimeout(flushExtra, ("done" in patch || "stretches" in patch) ? 0 : 300);
+  }
+  async function flushExtra() {
+    clearTimeout(xTimer);
+    if (!xPending || !store) return;
+    const id = xPending; xPending = null;
+    try { await store.save(id, extras[id]); setStatus(store.label, store.cls); renderWeekCard(); }
+    catch (e) { setStatus("Couldn't save your cardio or stretching. Edit it again to retry.", "warn"); }
+  }
+  document.addEventListener("input", (e) => {
+    const t = e.target;
+    if (!t.dataset || !t.dataset.x) return;
+    const box = t.closest(".track");
+    if (!box || !box.dataset.date) return;
+    editExtra(box.dataset.date, box.dataset.part, {[t.dataset.xk]: t.value === "" ? null : Number(t.value)}, xMeta(box));
+  });
+  document.addEventListener("click", (e) => {
+    const b = e.target.closest("button.xdone, button.xst");
+    if (!b) return;
+    const box = b.closest(".track");
+    if (!box || !box.dataset.date) return;
+    const part = box.dataset.part, date = box.dataset.date, meta = xMeta(box), card = box.closest(".ex");
+    const setSt = (btn, on) => { btn.setAttribute("aria-pressed", on); const bx = btn.querySelector(".box"); if (bx) bx.textContent = on ? "✓" : "○"; };
+    if (b.classList.contains("xst")) {
+      setSt(b, b.getAttribute("aria-pressed") !== "true");
+      editExtra(date, part, {stretches: [...box.querySelectorAll(".xst")].filter(x => x.getAttribute("aria-pressed") === "true").map(x => x.dataset.name)}, meta);
+      return;
+    }
+    const on = b.getAttribute("aria-pressed") !== "true", patch = {done: on, plan: +box.dataset.plan};
+    if (on) {
+      // One tap logs the plan: empty minutes take the planned time; no stretches ticked means all of them.
+      const mi = box.querySelector('[data-xk="min"]');
+      if (mi && mi.value === "") { mi.value = box.dataset.plan; patch.min = +box.dataset.plan; }
+      if (part === "mobility" && !box.querySelector('.xst[aria-pressed="true"]')) {
+        box.querySelectorAll(".xst").forEach(x => setSt(x, true));
+        patch.stretches = [...box.querySelectorAll(".xst")].map(x => x.dataset.name);
+      }
+      if (part === "cardio") patch.type = box.dataset.ctype;
+    }
+    const word = part === "mobility" ? "stretching" : part;
+    b.setAttribute("aria-pressed", on);
+    b.textContent = on ? `✓ ${word[0].toUpperCase() + word.slice(1)} done` : `Mark ${word} done`;
+    if (card) card.classList.toggle("logged", on);
+    editExtra(date, part, patch, meta);
+  });
+  document.addEventListener("focusout", (e) => { if (e.target && e.target.dataset && e.target.dataset.x) flushExtra(); });
+  document.addEventListener("keydown", (e) => {
+    const t = e.target;
+    if (e.key !== "Enter" || !t || !t.dataset || !t.dataset.x) return;
+    e.preventDefault();
+    const ins = [...t.closest(".track").querySelectorAll("input[data-x]")], i = ins.indexOf(t);
+    if (ins[i + 1]) ins[i + 1].focus(); else t.blur();
+  });
+  document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") flushExtra(); });
+  window.addEventListener("pagehide", () => { flushExtra(); });
+
   function renderSession() {
     if (!profile) return;
     const sp = plan().find(s => s.key === dayKey) || plan()[0];
@@ -775,13 +884,15 @@
       : `Week ${week} · ${WEEK_NOTE[week]} · lifting ends at ${clock(rows.end)}${mode === "yellow" ? " · yellow day" : mode === "light" ? " · light version" : ""}`;
     $("sessionTitle").textContent = sp.title;
     const lifts = rows.filter(r => !r.fixed);
+    const xDate = xDateFor(sp, body);
     $("exList").innerHTML = adjustBanner(mode, sp) + jointBanner(joints, rows, mode) + rows.map((r, ri) => {
       if (r.fixed) {
         const isMob = /^Mobility/.test(r.name), parts = String(r.meta).split(" · "), lead = parts.shift();
         const inner = isMob ? `<div class="meta"><b>${esc(lead)}</b></div><div class="chips">${stretchChips(parts.join(" · "))}</div>` : `<div class="meta">${esc(r.meta)}</div>`;
         const link = /finisher/i.test(r.name) ? watchBtn("Fat-burn finisher", "Watch: interval technique") : /^Swim/.test(r.name) ? watchBtn("Swim, freestyle", "Watch: freestyle technique")
           : /Stair|Rower|bike|treadmill/i.test(r.name) && !/^Water/.test(r.name) ? watchBtn(r.name, "Watch: proper form") : "";
-        return `<div class="ex fixed${isMob ? " mob" : ""}"><div class="exhead"><span class="clock">${clock(r.start)}</span><div class="exbody"><div class="exname">${esc(r.name)}</div>${inner}${link}</div></div></div>`;
+        const xp = r.track && xDate ? xPart(xDate, r.track) : {};
+        return `<div class="ex fixed${isMob ? " mob" : ""}${xp.done ? " logged" : ""}"><div class="exhead"><span class="clock">${clock(r.start)}</span><div class="exbody"><div class="exname">${esc(r.name)}</div>${inner}${link}</div></div>${r.track ? trackHtml(r, xDate, sp) : ""}</div>`;
       }
       const logged = setsOf(body, r.name), last = lastFor(r.name, id);
       let tg = targetFor(r.name, r.reps, week, id);
@@ -946,7 +1057,7 @@
     try { await store.save(id, sessions[id]); setStatus(store.label, store.cls); renderTabs(); renderWeekCard(); }
     catch (e) { setStatus("Couldn't save. Check your connection, then edit a set to retry.", "warn"); }
   }
-  async function flushNow() { clearTimeout(saveTimer); await flush(); }
+  async function flushNow() { clearTimeout(saveTimer); await flush(); await flushExtra(); }
   async function saveSettings() { try { if (store) await store.save("settings", settings); } catch (e) {} }
   const planOf = (el) => ({sets: +el.dataset.ps || 0, reps: +el.dataset.pr || 0, w: el.dataset.pw === "" || el.dataset.pw == null ? null : +el.dataset.pw});
   const saveMsg = (txt, cls) => { const s = $("saveStatus"); s.textContent = txt; s.style.color = cls === "warn" ? "var(--warn)" : cls === "ok" ? "var(--good)" : ""; };
@@ -1024,7 +1135,7 @@
       flush(); persistTimer();
       AppPlugin.minimizeApp();
     });
-    AppPlugin.addListener("pause", () => { clearTimeout(saveTimer); flush(); persistTimer(); });
+    AppPlugin.addListener("pause", () => { clearTimeout(saveTimer); flush(); flushExtra(); persistTimer(); });
   })();
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") { clearTimeout(saveTimer); flush(); persistTimer(); } });
   document.addEventListener("focusout", (e) => { if (e.target && e.target.dataset && e.target.dataset.f) { clearTimeout(saveTimer); flush(); } });
@@ -1248,7 +1359,7 @@
     });
 
     // ---- sheets ----
-    const used = new Set(["charts", "summary", "set log", "missed days by week", "missed days by month", "morning check-ins"]);
+    const used = new Set(["charts", "summary", "set log", "missed days by week", "missed days by month", "morning check-ins", "cardio and stretching"]);
     const sheetName = (n) => {
       let base = n.replace(/[\[\]:*?\/\\']/g, "").replace(/\s+/g, " ").trim().slice(0, 31) || "Exercise", nm = base, k = 2;
       while (used.has(nm.toLowerCase()) || used.has(nm)) { nm = base.slice(0, 28) + " " + k++; }
@@ -1297,6 +1408,30 @@
         const charts = [{id: ++chartN, xml: chartXml("Overnight HRV (higher is better)", "ms", nm, 0, 2, cis.length, "2F7D4F", hdr)},
                         {id: ++chartN, xml: chartXml("Resting heart rate (lower is better)", "bpm", nm, 0, 3, cis.length, "C26A1B", hdr)}];
         sheets.splice(2, 0, {name: nm, rows, widths: [12, 10, 10, 16, 9, 10, 9, 60, 8], charts, head: top});
+      }
+    }
+    // Cardio and stretching: minutes charts on top, one row per day, weekly totals below. Sits after the check-ins.
+    {
+      const xs = Object.values(extras || {}).filter(x => x && x.date).sort((a, b) => a.date.localeCompare(b.date));
+      if (xs.length) {
+        const top = 40, hdr = top + 1, nm = "Cardio and stretching";
+        const n = (v) => typeof v === "number" ? v : null;
+        const rows = Array.from({length: top}, () => [])
+          .concat([["Date", "Week", "Session", "Cardio", "Cardio min", "Distance", "Unit", "Effort /10", "Avg HR", "Finisher min", "Finisher effort", "Stretch min", "Stretches done"]])
+          .concat(xs.map(x => { const c = x.cardio || {}, f = x.finisher || {}, m = x.mobility || {};
+            return [x.date, x.week ?? "", x.day ? titleOf(x.day) : "", CARDIO_NAME[c.type] || "", n(c.min), n(c.dist), n(c.dist) != null ? (DIST_UNIT[c.type] || "") : "",
+              n(c.effort), n(c.hr), n(f.min), n(f.effort), n(m.min), (m.stretches || []).join(", ")]; }));
+        const wk = new Map();
+        xs.forEach(x => { const k = mondayOf(x.date), t = wk.get(k) || {c: 0, fin: 0, st: 0, sd: 0}, m = x.mobility || {};
+          t.c += n((x.cardio || {}).min) || 0; if (x.finisher && (x.finisher.done || x.finisher.min)) t.fin++;
+          t.st += n(m.min) || 0; if (m.done || m.min || (m.stretches || []).length) t.sd++; wk.set(k, t); });
+        rows.push([]);
+        rows.push(["Week of (Monday)", "", "", "", "Cardio min", "", "", "", "", "Finishers", "", "Stretch min", "Stretch days"]);
+        for (const [k, t] of wk) rows.push([k, "", "", "", t.c, "", "", "", "", t.fin, "", t.st, t.sd]);
+        const charts = [{id: ++chartN, xml: chartXml("Cardio minutes per day", "min", nm, 0, 4, xs.length, "0B6E8A", hdr)},
+                        {id: ++chartN, xml: chartXml("Stretching minutes per day", "min", nm, 0, 11, xs.length, "2F7D4F", hdr)}];
+        const at = sheets.findIndex(sh => sh.name === "Morning check-ins");
+        sheets.splice(at >= 0 ? at + 1 : 2, 0, {name: nm, rows, widths: [16, 7, 24, 22, 11, 10, 8, 10, 9, 12, 14, 12, 60], charts, head: top});
       }
     }
     // Charts tab first, so the graphs are the first thing you see when the file opens.
@@ -1374,7 +1509,7 @@
   let pendingRestore = null;
   async function backupData() {
     await flushNow();
-    const payload = {app: BACKUP_APP, schema: 1, exportedAt: new Date().toISOString(), profile, settings, sessions, checkins};
+    const payload = {app: BACKUP_APP, schema: 1, exportedAt: new Date().toISOString(), profile, settings, sessions, checkins, extras};
     $("backupText").value = JSON.stringify(payload);
     try {
       const how = await saveFile("Training backup " + today() + ".json", JSON.stringify(payload, null, 1), "application/json");
@@ -1410,21 +1545,23 @@
       if (ch) { body.updatedAt = Date.now(); writes.push([id, body]); filled += ch; }
     }
     const ci = Object.entries(data.checkins || {}).filter(([id, c]) => /^checkin-\d{4}-\d{2}-\d{2}$/.test(id) && c && !checkins[id]);
-    pendingRestore = {writes, ci, profile: !profile && data.profile ? data.profile : null};
+    const xs = Object.entries(data.extras || {}).filter(([id, x]) => /^extra-\d{4}-\d{2}-\d{2}$/.test(id) && x && typeof x === "object" && !extras[id]);
+    pendingRestore = {writes, ci, xs, profile: !profile && data.profile ? data.profile : null};
     const box = $("restoreConfirm");
-    box.innerHTML = !writes.length && !ci.length && !pendingRestore.profile
+    box.innerHTML = !writes.length && !ci.length && !xs.length && !pendingRestore.profile
       ? `<span>Everything in this backup is already here.</span><button type="button" class="btn alt" id="restoreNo">Close</button>`
-      : `<span>Backup from ${esc((data.exportedAt || "").slice(0, 10) || "unknown date")}: ${newS} new session${newS === 1 ? "" : "s"}, ${filled} set${filled === 1 ? "" : "s"} to fill in, ${ci.length} check-in${ci.length === 1 ? "" : "s"}. Anything already entered here is kept.</span>
+      : `<span>Backup from ${esc((data.exportedAt || "").slice(0, 10) || "unknown date")}: ${newS} new session${newS === 1 ? "" : "s"}, ${filled} set${filled === 1 ? "" : "s"} to fill in, ${ci.length} check-in${ci.length === 1 ? "" : "s"}${xs.length ? `, ${xs.length} day${xs.length === 1 ? "" : "s"} of cardio and stretching` : ""}. Anything already entered here is kept.</span>
          <button type="button" class="btn" id="restoreYes">Restore</button><button type="button" class="btn alt" id="restoreNo">Cancel</button>`;
     box.hidden = false; $("restorePanel").hidden = true;
   }
   async function applyRestore() {
     if (!pendingRestore || !store) return;
-    const {writes, ci, profile: pr} = pendingRestore; pendingRestore = null; $("restoreConfirm").hidden = true;
+    const {writes, ci, xs, profile: pr} = pendingRestore; pendingRestore = null; $("restoreConfirm").hidden = true;
     try {
       if (pr) { profile = pr; await store.save("profile", pr); }
       for (const [id, body] of writes) { sessions[id] = body; await store.save(id, body); }
       for (const [id, c] of ci) { const v = Object.assign({kind: "checkin"}, c); checkins[id] = v; await store.save(id, v); }
+      for (const [id, x] of (xs || [])) { const v = Object.assign({kind: "extra"}, x); extras[id] = v; await store.save(id, v); }
       renderAll(); saveMsg("Restored. Your history and \"Last time\" numbers are back.", "ok");
     } catch (e) { renderAll(); saveMsg("Restore stopped partway. Paste and restore again to finish.", "warn"); }
   }
@@ -1466,10 +1603,10 @@
   function say(text, delay) {
     try {
       if (!("speechSynthesis" in window)) return;
-      setTimeout(() => { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 1; u.volume = 1; window.speechSynthesis.speak(u); }, delay || 0);
+      setTimeout(() => { window.speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); u.rate = 0.95; u.pitch = 1.05; u.volume = 1; u.lang = "en-US"; window.speechSynthesis.speak(u); }, delay || 0);
     } catch (e) {}
   }
-  function testAlerts() { audio(); beep(2, 880); say("Rest", 700); setTimeout(() => { beep(3, 990); say("Go", 900); }, 3000); }
+  function testAlerts() { audio(); beep(2, 880); say("Start rest", 700); setTimeout(() => { beep(1, 990); say("20 seconds left", 450); }, 3500); setTimeout(() => { beep(3, 990); say("Go", 900); }, 7500); }
   async function wake() { try { if (navigator.wakeLock) tb.lock = await navigator.wakeLock.request("screen"); } catch (e) {} }
 
   // ---------- workout clock survives closing the app ----------
@@ -1522,7 +1659,8 @@
     tb.restLen = (lastSet ? 60 : rest) * 1000;
     tb.restEnd = Date.now() + tb.restLen; tb.goUntil = 0;
     tb.restMsg = lastSet ? "1 min to change over. Next: " + next : b.dataset.ex + ": set " + (si + 2) + " of " + of + " next";
-    beep(2, 880); say("Rest", 600);
+    tb.warnedFor = 0;
+    beep(2, 880); say("Start rest", 600);
     document.querySelectorAll(".ex.active").forEach(e => e.classList.remove("active"));
     const card = b.closest(".ex"); if (card) card.classList.add("active");
     renderTimer(); persistTimer();
@@ -1549,6 +1687,8 @@
     if (tb.restEnd && tb.running) {
       const left = tb.restEnd - now;
       if (left <= 0) { restOver(); return; }
+      // Spoken heads-up with 20 seconds of rest left (once per rest).
+      if (left <= 20000 && tb.restLen > 20000 && tb.warnedFor !== tb.restEnd) { tb.warnedFor = tb.restEnd; beep(1, 990); say("20 seconds left", 450); }
       rest.hidden = false;
       $("tbWord").textContent = "Rest"; $("tbWord").className = "tb-restword";
       $("tbRestTime").textContent = fmt(left + 999);
@@ -1592,8 +1732,8 @@
   // ================= storage =================
   function localStore() {
     const K = "coach.v1";
-    try { const raw = JSON.parse(localStorage.getItem(K) || "{}"); profile = raw.profile || null; settings = raw.settings || settings; sessions = raw.sessions || {}; checkins = raw.checkins || {}; } catch (e) {}
-    const persist = () => { try { localStorage.setItem(K, JSON.stringify({profile, settings, sessions, checkins})); } catch (e) {} };
+    try { const raw = JSON.parse(localStorage.getItem(K) || "{}"); profile = raw.profile || null; settings = raw.settings || settings; sessions = raw.sessions || {}; checkins = raw.checkins || {}; extras = raw.extras || {}; } catch (e) {}
+    const persist = () => { try { localStorage.setItem(K, JSON.stringify({profile, settings, sessions, checkins, extras})); } catch (e) {} };
     return {label: STANDALONE ? "Saved on this phone" : "Saved on this device only", cls: STANDALONE ? "ok" : "warn", save: async () => persist(), saveTimer: async () => {}};
   }
   async function init() {
@@ -1605,7 +1745,7 @@
     store = {label: "Saved", cls: "ok", save: (id, v) => col.doc(id).set(v), saveTimer: (t) => col.doc("timer").set(t)};
     let first = true;
     col.onSnapshot((snap) => {
-      const next = {}, nextCi = {}; let timerDoc = null, prof = null;
+      const next = {}, nextCi = {}, nextX = {}; let timerDoc = null, prof = null;
       snap.docs.forEach(d => {
         const v = d.data(); if (!v) return;
         if (d.id === "timer") timerDoc = v;
@@ -1613,14 +1753,17 @@
         else if (d.id === "profile") prof = v;
         else if (v.kind === "session") next[d.id] = v;
         else if (v.kind === "checkin") nextCi[d.id] = v;
+        else if (v.kind === "extra") nextX[d.id] = v;
       });
       if (pendingId && sessions[pendingId]) next[pendingId] = sessions[pendingId];
       sessions = next;
       const tci = checkins[ciId(today())];
       if (tci && (!nextCi[ciId(today())] || (nextCi[ciId(today())].savedAt || 0) < (tci.savedAt || 0))) nextCi[ciId(today())] = tci;
       checkins = nextCi;
+      for (const [id, x] of Object.entries(extras)) if (x && (!nextX[id] || (nextX[id].savedAt || 0) < (x.savedAt || 0))) nextX[id] = x;
+      extras = nextX;
       if (prof && (!profile || (prof.updatedAt || 0) >= (profile.updatedAt || 0))) profile = prof;
-      const active = document.activeElement, typing = active && active.dataset && active.dataset.f;
+      const active = document.activeElement, typing = active && active.dataset && (active.dataset.f || active.dataset.x);
       let resumed = false;
       if (first) {
         week = currentProgramWeek(); dayKey = null;
