@@ -471,6 +471,52 @@ article.ex:nth-of-type(4n+4) .num { background: var(--neon-l); }
 .su .field input, #suName { font-family: var(--body); }
 .field input::placeholder { color: #9a94c8; opacity: 1; }
 .progresscard summary::after { color: var(--neon-c); }
+/* ===== Workout note bubble (v1.6): tap, say what to change, the session updates on the spot. Works offline. ===== */
+.nb-bubble { position: fixed; z-index: 30; left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  width: 4.4rem; height: 4.4rem; border-radius: 50%; border: 3px solid var(--bg); background: var(--accent); color: var(--surface);
+  display: grid; place-items: center; align-content: center; cursor: pointer; box-shadow: 0 10px 24px -8px rgba(5,30,45,.7);
+  font: 700 .7rem var(--body); text-transform: uppercase; letter-spacing: .06em; }
+.nb-bubble[hidden] { display: none !important; }
+.nb-bubble .nb-ic { font-size: 1.6rem; line-height: 1; }
+.nb-bubble .nb-count { position: absolute; top: -6px; right: -6px; min-width: 1.6rem; height: 1.6rem; border-radius: 999px; background: var(--rope); color: #fff;
+  font: 700 .85rem var(--body); display: grid; place-items: center; padding: 0 5px; }
+.nb-bubble .nb-count[hidden] { display: none; }
+.nb-sheet { position: fixed; z-index: 31; left: 0; right: 0; bottom: 0; margin: 0 auto; max-width: 680px; max-height: 82vh; overflow-y: auto;
+  background: var(--surface); color: var(--ink); border: 3px solid var(--accent); border-bottom: 0; border-radius: 22px 22px 0 0;
+  padding: 16px 16px calc(18px + env(safe-area-inset-bottom, 0px)); display: grid; gap: 12px; box-shadow: 0 -16px 40px -18px rgba(5,30,45,.8); }
+.nb-sheet[hidden] { display: none !important; }
+.nb-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; position: sticky; top: -16px; z-index: 1;
+  background: var(--surface); padding: 8px 0; margin-top: -8px; }
+.nb-head h3 { font-size: 1.6rem; text-transform: uppercase; white-space: nowrap; }
+.nb-head .btn { min-height: 48px; padding: 8px 14px; white-space: nowrap; }
+.nb-ask { margin: 0; font-size: 1.12rem; font-weight: 600; }
+.nb-eg { margin: 0; font-size: .92rem; color: var(--muted); line-height: 1.4; }
+.nb-sheet textarea { width: 100%; min-width: 0; font: 500 1.25rem/1.4 var(--body); color: var(--ink); background: var(--bg); border: 2px solid var(--line);
+  border-radius: 12px; padding: 12px; resize: vertical; min-height: 6.5rem; }
+.nb-sheet textarea:focus { border-color: var(--accent); outline: none; }
+.nb-btns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.nb-btns .btn { width: 100%; }
+.nb-result { border-radius: 14px; border: 2px solid var(--line); padding: 12px 14px; display: grid; gap: 8px; font-size: 1.08rem; }
+.nb-result[hidden] { display: none; }
+.nb-result.ok { border-color: var(--good); background: var(--good-soft); }
+.nb-result.miss { border-color: var(--caution, var(--warn)); background: var(--caution-soft); }
+.nb-result.stop { border-color: var(--rope); background: var(--stop-soft); font-weight: 700; }
+.nb-result ul { margin: 0; padding-left: 1.2rem; display: grid; gap: 4px; }
+.nb-result p { margin: 0; }
+.nb-help summary { cursor: pointer; font-weight: 700; font-size: 1rem; padding: 6px 0; }
+.nb-help ul { margin: 4px 0 0; padding-left: 1.2rem; display: grid; gap: 4px; font-size: .98rem; }
+.nb-list { display: grid; gap: 10px; margin: 0; padding: 0; list-style: none; }
+.nb-item { border: 2px solid var(--line); border-radius: 14px; padding: 10px 12px; display: grid; gap: 6px; }
+.nb-item.undone { opacity: .6; }
+.nb-item q { font-weight: 700; font-size: 1.05rem; }
+.nb-item .nb-meta { font-size: .9rem; color: var(--muted); }
+.nb-item ul { margin: 0; padding-left: 1.2rem; font-size: 1rem; }
+.nb-tag { font-size: .78rem; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; padding: 2px 9px; border-radius: 999px; background: var(--accent-soft); justify-self: start; }
+.nb-tag.applied { background: var(--good-soft); }
+.nb-item .ghost { justify-self: start; }
+.cue.note { color: var(--ink); background: var(--accent-soft); border-radius: 10px; padding: 8px 12px; margin-top: 4px; }
+body.nb-open .nb-bubble { display: none; }
+body { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }   /* room so the note bubble never covers the last card */
 </style>
 </head>
 <body>
@@ -556,6 +602,32 @@ article.ex:nth-of-type(4n+4) .num { background: var(--neon-l); }
   </div>
 </div>
 
+<button type="button" class="nb-bubble" id="nbBubble" aria-expanded="false" aria-controls="nbSheet" aria-label="Open workout note" hidden>
+  <span class="nb-ic" aria-hidden="true">✎</span><span>Note</span><span class="nb-count" id="nbCount" hidden></span>
+</button>
+<section class="nb-sheet" id="nbSheet" role="dialog" aria-label="Workout note" hidden>
+  <div class="nb-head"><h3>Workout note</h3><button type="button" class="btn alt" id="nbMin" aria-label="Minimize note">Minimize</button></div>
+  <p class="nb-ask">What do you want to change or add?</p>
+  <p class="nb-eg">Try: “swap leg press for goblet squat”, “3 sets of rows”, “rest 2 min on bench”, “use 50 on rows”, “add 2 sets of farmer carry”, “knee hurts on lunges”. Tap the mic on your keyboard to talk.</p>
+  <textarea id="nbText" rows="3" aria-label="Your note" placeholder="Type or talk your note"></textarea>
+  <div class="nb-btns">
+    <button type="button" class="btn" id="nbApply">Change my workout</button>
+    <button type="button" class="btn alt" id="nbSave">Just save note</button>
+  </div>
+  <div class="nb-result" id="nbResult" aria-live="polite" hidden></div>
+  <details class="nb-help"><summary>What I understand</summary><ul>
+    <li><b>Swap:</b> “swap A for B”, “do B instead of A”, “A is taken, do B”</li>
+    <li><b>Sets:</b> “3 sets of A”, “one more set of A”, “one less set on A”</li>
+    <li><b>Reps:</b> “10 reps on A”, “A for 12 reps”</li>
+    <li><b>Rest:</b> “rest 2 min on A”, “90 sec rest” (no name = the exercise you're on)</li>
+    <li><b>Weight today:</b> “use 135 on A”, “A at 50 lb”, “go lighter on A”</li>
+    <li><b>Add or skip:</b> “add 2 sets of farmer carry”, “skip A”</li>
+    <li><b>Something hurts:</b> “elbow twinge on A” → a reminder on the card and about 20% lighter today</li>
+    <li>Say <b>“from now on”</b> to keep a swap, set, rep or rest change for future sessions. Join changes with “and” or commas.</li>
+  </ul></details>
+  <div><span class="label" id="nbListLabel">Notes for this session</span></div>
+  <ul class="nb-list" id="nbList"></ul>
+</section>
 <script src="jszip.min.js"></script>
 <script src="app.js"></script>
 <script>

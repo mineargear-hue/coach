@@ -25,6 +25,8 @@
   let sessions = {};                  // "c<cycle>-w<week>-<key>" -> logged sets
   let checkins = {};                  // "checkin-YYYY-MM-DD" -> morning readings
   let extras = {};                    // "extra-YYYY-MM-DD" -> cardio, finisher and stretching logged that day
+  let notes = {};                     // "note-<ms>" -> workout note and the changes it made (v1.6)
+  let curView = null;                 // the session on screen, for the note bubble
   let week = 1, dayKey = null, store = null, pendingId = null, saveTimer = null;
   let editingProfile = false, ciEditing = false, confirmingReset = false;
   let curCardio = "swim", afterLift = "stretching, then cardio", afterLiftSay = "Stretch next.";
@@ -264,9 +266,10 @@
     const fixed = () => RAMP + items.reduce((a, it) => a + it.sets * workSec(it) + CHANGE, 0);
     const total = (f) => items.reduce((a, it) => a + (it.sets - 1) * restAt(it, f), 0);
     for (let g = 0; g < 20 && WINDOW - fixed() < total(0); g++) {
-      const acc = items.filter(it => !it.main && it.sets > 2).pop();
+      const acc = items.filter(it => !it.main && it.sets > 2 && !it.noteSets).pop();
       if (acc) { acc.sets -= 1; continue; }
-      if (items.length > 2) { items.pop(); continue; }
+      const drop = items.map((it, i) => i).filter(i => !items[i].noteAdded && !items[i].noteSets && i > 0).pop();
+      if (items.length > 2 && drop != null) { items.splice(drop, 1); continue; }
       break;
     }
     let lo = 0, hi = 3;
@@ -338,9 +341,195 @@
     for (let i = items.length - 1; i >= 0; i--) if (items[i].drop) items.splice(i, 1);
   }
 
+  // ================= workout notes (v1.6): offline, rule-based =================
+  // A note typed mid-workout becomes a few safe, structured changes. No internet and no AI: patterns only.
+  const NOTE_TYPES = ["swap", "sets", "reps", "rest", "weight", "cue", "skip", "add"];
+  const loggedCount = (body, name) => setsOf(body, name).filter(x => x && (x.w != null || x.r != null || x.done)).length;
+  function noteAdjust(items, nc, body) {
+    if (!nc.length) return false;
+    let touched = false;
+    const find = (ex) => items.find(it => baseName(it.name).toLowerCase() === baseName(ex || "").toLowerCase());
+    const mk = (name, sets, reps, from) => { const L = BYNAME[name] || {}; return {name, sets, reps, base: 60, main: false, side: !!L.side || /per side|per leg/.test(reps), noteSets: true, noteFrom: from, noteAdded: !from}; };
+    nc.forEach(c => {
+      if (c.type === "add") { if (!c.to || find(c.to)) return; items.push(mk(c.to, c.sets || 3, c.reps || "10")); touched = true; return; }
+      const it = find(c.ex); if (!it) return;
+      const done = loggedCount(body, it.name);
+      if (c.type === "swap" && c.to && !find(c.to)) {
+        if (done) {   // sets already logged stay under the old name; the rest move to the new exercise
+          const left = Math.max(1, it.sets - done); it.sets = done; it.noteSets = true;
+          items.splice(items.indexOf(it) + 1, 0, mk(c.to, c.sets || left, c.reps || it.reps, it.name));
+        } else {
+          const L = BYNAME[c.to] || {};
+          it.noteFrom = it.name; it.name = c.to; it.side = !!L.side; it.main = false;
+          if (c.reps) it.reps = c.reps; if (c.sets) { it.sets = c.sets; it.noteSets = true; }
+        }
+        touched = true;
+      } else if (c.type === "skip") { if (done) { it.sets = done; it.noteSets = true; } else items.splice(items.indexOf(it), 1); touched = true; }
+      else if (c.type === "sets" && c.sets) { it.sets = Math.max(c.sets, done || 0); it.noteSets = true; touched = true; }
+      else if (c.type === "reps" && c.reps) { it.reps = c.reps; touched = true; }
+      else if (c.type === "rest" && c.rest) { it.noteRest = c.rest; }
+      else if (c.type === "weight" && (c.w != null || c.pct)) { it.noteW = c.w != null ? c.w : null; it.notePct = c.pct || null; }
+      else if (c.type === "cue" && c.cue) { it.noteCue = it.noteCue ? it.noteCue + " · " + c.cue : c.cue; }
+    });
+    return touched;
+  }
+  // "today" notes apply to the session they were written in; "from now on" notes to later sessions too
+  // (never to days already logged before the note). Weight changes are always today only.
+  function noteChangesFor(sp, body, id) {
+    const out = [];
+    Object.values(notes).filter(n => n && n.status === "applied" && Array.isArray(n.changes))
+      .sort((a, b) => (a.savedAt || 0) - (b.savedAt || 0)).forEach(n => n.changes.forEach(c => {
+        if (n.sid === id) out.push(c);
+        else if (c.scope === "always" && c.type !== "weight" && !(body && body.date && body.date < n.date) && (c.type !== "add" || n.day === sp.key)) out.push(c);
+      }));
+    return out;
+  }
+
+  // ---- the parser ----
+  const NUMW = {zero: 0, one: 1, a: 1, an: 1, single: 1, two: 2, couple: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
+    eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30, forty: 40, "forty five": 45, fifty: 50, sixty: 60, ninety: 90};
+  const ALIAS = [   // spoken shorthand → words found in exercise names
+    [/\brdls?\b/g, "romanian deadlift"], [/\bohp\b/g, "shoulder press"], [/\bpush ?ups?\b/g, "push-up"], [/\bpull ?ups?\b/g, "pull-up"],
+    [/\bchin ?ups?\b/g, "pull-up"], [/\bsit ?ups?\b/g, "crunch"], [/\blats?\b/g, "lat pulldown"], [/\bpull ?downs?\b/g, "pulldown"],
+    [/\bdbs?\b/g, "dumbbell"], [/\bbb\b/g, "barbell"], [/\bkb\b/g, "kettlebell"], [/\bstep ?ups?\b/g, "step-up"], [/\bsplit squats?\b/g, "bulgarian split squat"],
+    [/\bfarmers?'?s? (walks?|carry|carries)\b/g, "farmer carry"], [/\bglute bridges?\b/g, "glute bridge"], [/\bflyes\b/g, "fly"], [/\bsquat rack\b/g, "squat"], [/\bbench rack\b/g, "bench"], [/\bcable (station|machine|stack)\b/g, "cable"]];
+  const STOP_RE = /\bchest\b.{0,24}\b(pain|pressure|tight|hurt|heavy|squeez|ach|weird|funny|burn)|tight(ness)? in (my )?chest|pressure in (my )?chest|dizz|light-?headed|faint|pass(ed|ing)? out|black(ing)? out|can'?t (catch|get) my breath|short(ness)? of breath|trouble breathing|palpitat|heart (is )?(racing|pounding|skipping|fluttering)|irregular heart|arm (pain|numb)|jaw pain|nause/i;
+  const STOP_MSG = "Stop the workout now and sit down. If chest pain or pressure, trouble breathing, faintness or a racing heart doesn't ease within a few minutes of rest, call 911 (or your local emergency number). Tell your doctor about it even if it passes.";
+  const HURT_RE = /\b(hurts?|hurting|pain|painful|sore|twinge|tweak(ed)?|pinch(es|ing)?|aches?|aching|tight|strain(ed)?|pulled|bothering|bugging|clicking|popping)\b/;
+  const ALWAYS_RE = /\b(from now on|always|every time|going forward|permanently|for good|every session|each time)\b/;
+  const stem = (w) => w.replace(/(es|s)$/, "").replace(/ing$/, "");
+  const toks = (s) => String(s).toLowerCase().replace(/[^a-z0-9 -]/g, " ").replace(/-/g, " ").split(/\s+/).filter(w => w && !/^(the|a|an|of|on|for|with|my|to|and|do|some|this|that|set|sets|rep|reps|lb|lbs)$/.test(w)).map(stem);
+  const GENERIC = new Set(["barbell", "dumbbell", "cable", "machine", "band", "bodyweight", "seated", "standing", "one", "arm", "single", "leg", "press", "row", "raise", "curl", "squat", "fly", "extension", "up", "down", "pull", "push", "split"]);
+  const GENERIC_S = new Set([...GENERIC].map(stem));
+  function scoreName(phrase, name) {
+    const p = toks(phrase), n = toks(name); if (!p.length || !n.length) return 0;
+    const hit = n.filter(w => p.includes(w));
+    if (!hit.length) return 0;
+    const special = hit.some(w => !GENERIC_S.has(w));        // "romanian", "goblet", "pulldown" count more than "press"
+    return 0.6 * hit.length / p.length + 0.4 * hit.length / n.length + (special ? 0.15 : 0);
+  }
+  function bestName(phrase, names, min) {
+    let best = null, bs = 0;
+    names.forEach(n => { const s = scoreName(phrase, n); if (s > bs) { bs = s; best = n; } });
+    return bs >= (min || 0.6) ? best : null;
+  }
+  const titleCase = (s) => s.replace(/\s+/g, " ").trim().replace(/^./, c => c.toUpperCase()).slice(0, 40);
+  function newExName(phrase) {
+    const clean = phrase.replace(/\b(instead|please|today|now|then|from now on|always|every time|going forward|for good)\b/g, " ").replace(/[^a-z0-9 '-]/gi, " ").replace(/\s+/g, " ").trim();
+    if (!clean || clean.length < 3) return null;
+    return bestName(clean, LIB.map(x => x.name), 0.75) || titleCase(clean.replace(/([a-rt-z])s$/, "$1"));
+  }
+  function normalize(text) {
+    let t = " " + String(text).toLowerCase().replace(/[’‘]/g, "'").replace(/[“”]/g, '"') + " ";
+    t = t.replace(/clean (and|&|n) (press|jerk)/g, "clean-and-$2");
+    t = t.replace(/\b(a minute and a half|minute and a half|one and a half min(ute)?s?|1 and a half min(ute)?s?|1\.5 min(ute)?s?)\b/g, "90 sec").replace(/\b(a|one) min(ute)?\b/g, "60 sec").replace(/\bhalf a min(ute)?\b/g, "30 sec").replace(/\b(two|2) and a half min(ute)?s?\b/g, "150 sec");
+    t = t.replace(/\b(taken|busy|occupied|in use|broken|out of order|not available|full)\s*,\s*/g, "$1 ");
+    Object.entries(NUMW).sort((a, b) => b[0].length - a[0].length).forEach(([w, n]) => { t = t.replace(new RegExp("\\b" + w + "\\b(?= (more |less |fewer |extra |other )?(sets?|reps?|min|minutes?|sec|seconds?|lb|lbs|pounds))", "g"), String(n)); });
+    ALIAS.forEach(([re, to]) => { t = t.replace(re, to); });
+    return t.replace(/\s+/g, " ").trim();
+  }
+  const restSec = (n, unit) => Math.round(/^m/.test(unit || "") || (!unit && n <= 5) ? n * 60 : n);
+  // Returns {changes, misses:[clause], stop}
+  function parseNote(text, view) {
+    const lifts = view.rows.filter(r => !r.fixed), names = lifts.map(r => r.name);
+    const out = {changes: [], misses: [], notFound: [], stop: STOP_RE.test(text)};
+    if (out.stop) return out;
+    const t = normalize(text), scope = ALWAYS_RE.test(t) ? "always" : "today";
+    const current = (lifts.find(r => loggedCount(sessions[view.id], r.name) < r.sets) || lifts[0] || {}).name;
+    let lastEx = null;
+    const exOf = (phrase, fallback) => {
+      const ph = String(phrase || "").replace(/^(the|my|those|these)\s+/, "").trim();
+      const hit = ph && !/^(it|this|this one|that|that one|these|them|current|next)$/.test(ph) ? bestName(ph, names) : null;
+      if (hit) return (lastEx = hit);
+      if (ph && !/^(it|this|this one|that|that one|these|them|current|next)$/.test(ph) && !fallback) { out.notFound.push(ph); return null; }
+      return fallback || /^(it|this|this one|that|that one)$/.test(ph) ? (lastEx || current) : null;
+    };
+    const clauses = t.split(/\s*(?:[.;,!?]|\band then\b|\bthen\b|\balso\b|\band\b(?= (?:swap|switch|replace|skip|drop|add|rest|use|do|go|only|just|\d)))\s*/).map(s => s.trim()).filter(s => s.length > 1);
+    clauses.forEach(c0 => {
+      const c = c0.replace(ALWAYS_RE, "").replace(/\b(please|today|for today|now|instead)\b(?! of)/g, " ").replace(/\s+/g, " ").trim();
+      let m, before = out.changes.length;
+      const push = (ch) => { if (ch.type !== "add" && !ch.ex) return; out.changes.push(Object.assign({scope: ch.type === "weight" ? "today" : scope}, ch));
+        if ((ch.type === "swap" || ch.type === "add") && ch.to && !names.includes(ch.to)) names.push(ch.to); if (ch.to) lastEx = ch.to; };
+      const setsIn = (s) => { const x = s.match(/(\d+)\s*sets?/); return x ? Math.min(6, Math.max(1, +x[1])) : null; };
+      const repsIn = (s) => { const so = s.match(/sets?\s+(?:of\s+)?(\d+)(?!\s*(?:sets?|lb|lbs|pounds|min|sec))\b/); if (so && +so[1] > 1) return so[1]; const x = s.match(/(\d+)\s*(reps?|sec(onds?)?|s)\b(\s*(per|each) (side|leg|arm))?/) || s.match(/\bx\s*(\d+)/); if (!x) return null;
+        return x[2] && /^s/.test(x[2]) ? x[1] + " sec" + (x[4] ? " per side" : "") : x[1] + (x[4] ? " per side" : ""); };
+      const strip = (s) => s.replace(/(\d+)\s*sets?(\s+of)?(\s+\d+\b(?!\s*(?:lb|lbs|pounds)))?|(\d+)\s*(reps?|sec(onds?)?)(\s*(per|each) (side|leg|arm))?|\bx\s*\d+|\b(for|of|with)\b\s*$/g, " ").replace(/\s+/g, " ").trim();
+      // swap
+      if ((m = c.match(/(?:swap|switch|replace|change|sub(?:stitute)?|trade)\s+(?:out\s+)?(.+?)\s+(?:for|with|to|into)\s+(.+)/))) {
+        const ex = exOf(m[1]), to = newExName(strip(m[2])); if (ex && to && to !== ex) push({type: "swap", ex, to, sets: setsIn(m[2]), reps: repsIn(m[2])});
+      } else if ((m = c.match(/(?:do|use|try)?\s*(.+?)\s+instead of\s+(.+)/))) {
+        const ex = exOf(m[2]), to = newExName(strip(m[1])); if (ex && to && to !== ex) push({type: "swap", ex, to, sets: setsIn(m[1]), reps: repsIn(m[1])});
+      } else if ((m = c.match(/(.+?)\s+(?:is|are|'s)\s+(?:taken|busy|occupied|in use|broken|out of order|not available|full)\s*,?\s*(?:so\s+)?(?:i'?ll\s+)?(?:do|use|try|go with|swap (?:it )?(?:for|to)|gimme|give me)?\s*(.*)/))) {
+        const ex = exOf(m[1]), to = m[2] ? newExName(strip(m[2])) : null;
+        if (ex && to && to !== ex) push({type: "swap", ex, to, sets: setsIn(m[2]), reps: repsIn(m[2])});
+        else if (ex) push({type: "cue", ex, cue: "Equipment busy. Tell me what you'll do instead, e.g. “swap it for …”"});
+      }
+      // skip
+      else if ((m = c.match(/^(?:skip|skipping|drop|remove|cut|leave out|no more)\s+(?:the\s+)?(.+)/))) { push({type: "skip", ex: exOf(m[1], /^(it|this( one)?)$/.test(m[1]))}); }
+      // add
+      else if ((m = c.match(/^(?:add|adding|throw in|include|tack on)\s+(.+)/))) {
+        const what = m[1], more = what.match(/^(\d+\s*)?(?:more|extra|another)\s+sets?\s+(?:of|on|for)\s+(.+)/);
+        if (more) { const ex = exOf(more[2]), r = lifts.find(x => x.name === ex); if (ex && r) push({type: "sets", ex, sets: Math.min(6, r.sets + (+more[1] || 1))}); }
+        else {
+          const to = newExName(strip(what)), have = to && lifts.find(x => x.name === to);
+          if (have) push({type: "sets", ex: to, sets: Math.min(6, have.sets + (setsIn(what) || 1))});
+          else if (to && !names.includes(to)) { let rp = repsIn(what); if (!rp) { try { rp = BYNAME[to] ? String(repsFor(to, false, week)) : "10"; } catch (e) { rp = "10"; } } push({type: "add", to, sets: setsIn(what) || 3, reps: rp}); }
+        }
+      }
+      // one more / one less set
+      else if ((m = c.match(/(\d+)?\s*(more|extra|another|less|fewer)\s+sets?\s*(?:of|on|for)?\s*(.*)/))) {
+        const ex = exOf(m[3], !m[3]), r = lifts.find(x => x.name === ex), d = (+m[1] || 1) * (/less|fewer/.test(m[2]) ? -1 : 1);
+        if (ex && r) push({type: "sets", ex, sets: Math.min(6, Math.max(1, r.sets + d))});
+      }
+      // rest
+      else if ((m = c.match(/rest\s*(?:time\s*)?(?:for|is|at|to|of)?\s*(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|m|sec(?:ond)?s?|s)?\b(?:\s+(?:on|for|between|after)\s+(.+))?/)) ||
+               (m = c.match(/(\d+(?:\.\d+)?)\s*(min(?:ute)?s?|m|sec(?:ond)?s?|s)?\s+rests?\b(?:\s+(?:on|for|between|after)\s+(.+))?/))) {
+        const ex = exOf(m[3], !m[3]), s = restSec(+m[1], m[2]);
+        if (ex) push({type: "rest", ex, rest: Math.min(300, Math.max(20, s))});
+      }
+      // lighter / easier
+      else if ((m = c.match(/(?:go\s+)?(?:a bit |a little )?(lighter|easier)\s*(?:on|for)?\s*(.*)/))) {
+        const ex = exOf(m[2], true); if (ex) push({type: "weight", ex, pct: 0.9});
+      }
+      // weight
+      else if ((m = c.match(/(?:use|do|go|try|put|load)?\s*(\d+(?:\.\d+)?)\s*(?:lb|lbs|pounds|#)?\s+(?:on|for)\s+(.+)/)) && !/sets?|reps?|min|sec/.test(m[2].split(" ")[0])) {
+        const ex = exOf(m[2]), w = +m[1]; if (ex && w > 0 && w <= 1000) push({type: "weight", ex, w: Math.round(w / 2.5) * 2.5});
+      } else if ((m = c.match(/(.+?)\s+(?:at|with|using|@)\s+(\d+(?:\.\d+)?)\s*(?:lb|lbs|pounds|#)?$/))) {
+        const ex = exOf(m[1]), w = +m[2]; if (ex && w > 0 && w <= 1000) push({type: "weight", ex, w: Math.round(w / 2.5) * 2.5});
+      }
+      // sets / reps with an exercise
+      else if ((m = c.match(/(\d+)\s*sets?\b/)) && +m[1] > 0) {
+        const ph = strip(c).replace(/\b(only|just|do|make it|on|of|for)\b/g, " ").replace(/\s+/g, " ").trim(), ex = exOf(ph, !ph), rp = repsIn(c);
+        if (ex) { push({type: "sets", ex, sets: Math.min(6, +m[1])}); if (rp) push({type: "reps", ex, reps: rp}); }
+      } else if ((m = c.match(/(\d+)\s*(reps?|sec(?:onds?)?)\b/)) || (m = c.match(/\b(?:for|x)\s*(\d+)\s*$/))) {
+        const ph = strip(c).replace(/\b(only|just|do|make it|on|of|for|x)\b/g, " ").replace(/\s+/g, " ").trim(), ex = exOf(ph, !ph), rp = repsIn(c) || m[1];
+        if (ex) push({type: "reps", ex, reps: rp});
+      }
+      // something hurts → reminder + about 20% lighter today
+      if (out.changes.length === before && HURT_RE.test(c)) {
+        const on = c.match(/\b(?:on|with|during|doing|from|in)\s+(?:the\s+|my\s+)?([a-z][a-z -]+)$/);
+        const nf = out.notFound.length, ex = on ? (bestName(on[1], names) || (out.notFound.push(on[1]), null)) : (lastEx || current);
+        if (!ex && on && out.notFound.length > nf) { /* named an exercise that isn't in this session */ }
+        if (ex) { push({type: "cue", ex, cue: titleCase(c0) + ". Pain-free range only; stop the exercise if it hurts during the set."}); push({type: "weight", ex, pct: 0.8}); }
+        else if (on) { out.changes.length === before && out.misses.push(c0); return; }
+      }
+      // just an exercise mentioned → a reminder on it
+      if (out.changes.length === before) {
+        const ex = bestName(c, names, 0.6);
+        if (ex && !/^(skip|add|swap|rest)/.test(c)) push({type: "cue", ex, cue: titleCase(c0)});
+        else if (!out.notFound.length || !/\b(swap|switch|replace|instead|skip|drop|sets?|reps?|rest|on|at|for)\b/.test(c)) out.misses.push(c0);
+      }
+    });
+    // one change per type per exercise: keep the last one said
+    const seen = new Set(), keep = [];
+    out.changes.slice().reverse().forEach(ch => { const k = ch.type + "|" + (ch.ex || ch.to); if (ch.type === "cue" || !seen.has(k)) { seen.add(k); keep.unshift(ch); } });
+    out.changes = keep.slice(0, 8);
+    return out;
+  }
+
   // ================= building a session =================
   // mode from the check-in light: null (green), "yellow", "light" (red day, light version), "recovery", "stop"
-  function buildSession(w, sp, mode, joints) {
+  function buildSession(w, sp, mode, joints, nc, body) {
     const B = budget(), rows = [];
     const ck = cardioKind(sp, joints), cardioName = CARDIO_NAME[ck];
     curCardio = ck;
@@ -356,13 +545,16 @@
     jointAdjust(items, joints);
     if (mode === "yellow") items.forEach(it => { if (it.main) it.sets = Math.max(2, it.sets - 1); });
     if (mode === "light") items.forEach(it => { it.sets = 2; });
+    noteAdjust(items, nc || [], body);
     fit(items, B.lift);
+    items.forEach(it => { if (it.noteRest) it.rest = it.noteRest; });
     rows.push({fixed: true, start: 0, name: "Warm-up", meta: B.warm + " min · Easy cardio until you're warm, then a light practice set of the first exercise"});
     let t = B.warm * 60;
     items.forEach(it => {
       t += it.ramp;
       rows.push({name: it.name, sets: it.sets, reps: it.reps, rest: it.rest, start: t / 60, ramp: it.ramp / 60, main: it.main,
-        stepFrom: it.stepFrom, jointFrom: it.jointFrom, jointLoad: it.jointLoad, jointWhy: it.jointWhy});
+        stepFrom: it.stepFrom, jointFrom: it.jointFrom, jointLoad: it.jointLoad, jointWhy: it.jointWhy,
+        noteFrom: it.noteFrom, noteCue: it.noteCue, noteW: it.noteW, notePct: it.notePct, noteAdded: it.noteAdded});
       t += it.sets * workSec(it) + (it.sets - 1) * it.rest + CHANGE;
     });
     const end = t / 60, liftEnd = Math.ceil(end);
@@ -879,7 +1071,8 @@
     const sp = plan().find(s => s.key === dayKey) || plan()[0];
     const id = sid(settings.cycle, week, sp.key), body = sessions[id] || {};
     const mode = sessionMode(sp, body), joints = isTodaySession(sp, body) ? jointsToday() : {};
-    const rows = buildSession(week, sp, mode, joints);
+    const rows = buildSession(week, sp, mode, joints, noteChangesFor(sp, body, id), body);
+    curView = {sp, id, mode, rows, targets: {}};
     $("sessionEyebrow").textContent = mode === "recovery" ? `Week ${week} · Recovery day` : mode === "stop" ? `Week ${week} · No training today`
       : `Week ${week} · ${WEEK_NOTE[week]} · lifting ends at ${clock(rows.end)}${mode === "yellow" ? " · yellow day" : mode === "light" ? " · light version" : ""}`;
     $("sessionTitle").textContent = sp.title;
@@ -903,6 +1096,10 @@
       if (mode === "light") tg = {w: tg.w != null ? round5(tg.w * 0.6) : null, reps: tg.reps, kind: "deload", msg: tg.w != null ? `Light day: about 60% of ${tg.w} lb. Smooth, easy reps` : "Light day: easy reps, stop well short of your limit"};
       else if (r.jointLoad && tg.w != null) tg = {w: round5(tg.w * r.jointLoad), reps: tg.reps, kind: "down", msg: `Easy on your ${r.jointWhy}: about 80% of ${tg.w} lb, only through a pain-free range`};
       else if (r.jointLoad) tg = Object.assign({}, tg, {msg: `Easy on your ${r.jointWhy}: go about 20% lighter and only as deep as is pain-free`});
+      if (mode !== "light" && r.noteW != null) tg = {w: r.noteW, reps: tg.reps, kind: "hold", msg: `Your note: ${r.noteW} lb today`};
+      else if (mode !== "light" && r.notePct && tg.w != null) tg = {w: round5(tg.w * r.notePct), reps: tg.reps, kind: "down", msg: `Your note: about ${Math.round(100 - r.notePct * 100)}% lighter today`};
+      else if (mode !== "light" && r.notePct) tg = Object.assign({}, tg, {kind: "down", msg: `Your note: go about ${Math.round(100 - r.notePct * 100)}% lighter than usual today`});
+      if (curView) curView.targets[r.name] = tg.w;
       const repsOut = tg.reps || (parseInt(r.reps, 10) || ""), repsShow = String(r.reps).replace(/^\d+/, String(repsOut));
       const planAttr = `data-ps="${r.sets}" data-pr="${repsOut}" data-pw="${tg.w != null ? tg.w : ""}"`;
       const arrow = {up: "▲", hold: "■", down: "▼", deload: "▽", "new": "●"}[tg.kind];
@@ -919,9 +1116,11 @@
       return `<article class="ex"><div class="exhead"><div class="exnum"><span class="num">${li + 1}</span><span class="clock">${clock(r.start)}</span></div>
         <div class="exbody"><div class="exname">${esc(r.name)}</div>
         ${r.jointFrom ? `<p class="cue">Swapped in for ${esc(r.jointFrom)} to spare your ${esc(r.jointWhy)}.</p>` : ""}
+        ${r.noteFrom ? `<p class="cue">Swapped in for ${esc(r.noteFrom)} (your note).</p>` : r.noteAdded ? `<p class="cue">Added from your note.</p>` : ""}
+        ${r.noteCue ? `<p class="cue note">✎ ${esc(r.noteCue)}</p>` : ""}
         ${r.stepFrom && !r.jointFrom ? `<p class="cue">Easier version of ${esc(r.stepFrom)} for now. Do it cleanly twice and ${esc(r.stepFrom)} comes back.</p>` : ""}
         <div class="target ${tg.kind}"><span class="tgt-main">Target: ${tg.w != null ? tg.w + " lb × " : bw ? "bodyweight × " : ""}${esc(repsShow)}</span><span class="tgt-why">${arrow} ${esc(tg.msg)}</span></div>
-        <div class="meta"><b>${r.sets} sets × ${esc(repsShow)}</b> · rest ${restTxt(r.rest)} between sets${r.ramp ? ` · do ${Math.round(r.ramp)} min of lighter warm-up sets first` : ""}</div>
+        <div class="meta"><b>${r.sets} set${r.sets === 1 ? "" : "s"} × ${esc(repsShow)}</b> · rest ${restTxt(r.rest)} between sets${r.ramp ? ` · do ${Math.round(r.ramp)} min of lighter warm-up sets first` : ""}</div>
         ${STRETCH.has(baseName(r.name)) ? `<p class="cue">Stretch focus: lower for 3 seconds and pause 1 second in the deepest position you can control.</p>` : ""}
         ${watchBtn(baseName(r.name), "Watch how to do it")}
         ${lastTxt ? `<div class="last">Last time: <b>${esc(lastTxt)}</b></div>` : ""}</div></div><div class="sets">${sets}</div></article>`;
@@ -935,8 +1134,9 @@
   }
   function renderAll() {
     renderSetup();
-    if (!profile || editingProfile) { renderCheckin(); return; }
+    if (!profile || editingProfile) { renderCheckin(); const nb = $("nbBubble"); if (nb) nb.hidden = true; return; }
     renderHeader(); renderNudge(); renderCheckin(); renderWeek(); renderTabs(); renderWeekCard(); renderSession(); renderFooter(); renderProgress();
+    renderNotes();
   }
   // ---------- My progress: one chart per exercise plus morning trends, drawn on the page (works offline) ----------
   function progressSeries() {
@@ -1518,7 +1718,7 @@
   let pendingRestore = null;
   async function backupData() {
     await flushNow();
-    const payload = {app: BACKUP_APP, schema: 1, exportedAt: new Date().toISOString(), profile, settings, sessions, checkins, extras};
+    const payload = {app: BACKUP_APP, schema: 1, exportedAt: new Date().toISOString(), profile, settings, sessions, checkins, extras, notes};
     $("backupText").value = JSON.stringify(payload);
     try {
       const how = await saveFile("Training backup " + today() + ".json", JSON.stringify(payload, null, 1), "application/json");
@@ -1555,22 +1755,24 @@
     }
     const ci = Object.entries(data.checkins || {}).filter(([id, c]) => /^checkin-\d{4}-\d{2}-\d{2}$/.test(id) && c && !checkins[id]);
     const xs = Object.entries(data.extras || {}).filter(([id, x]) => /^extra-\d{4}-\d{2}-\d{2}$/.test(id) && x && typeof x === "object" && !extras[id]);
-    pendingRestore = {writes, ci, xs, profile: !profile && data.profile ? data.profile : null};
+    const ns = Object.entries(data.notes || {}).filter(([id, n]) => /^note-\d+$/.test(id) && n && typeof n === "object" && !notes[id]);
+    pendingRestore = {writes, ci, xs, ns, profile: !profile && data.profile ? data.profile : null};
     const box = $("restoreConfirm");
-    box.innerHTML = !writes.length && !ci.length && !xs.length && !pendingRestore.profile
+    box.innerHTML = !writes.length && !ci.length && !xs.length && !ns.length && !pendingRestore.profile
       ? `<span>Everything in this backup is already here.</span><button type="button" class="btn alt" id="restoreNo">Close</button>`
-      : `<span>Backup from ${esc((data.exportedAt || "").slice(0, 10) || "unknown date")}: ${newS} new session${newS === 1 ? "" : "s"}, ${filled} set${filled === 1 ? "" : "s"} to fill in, ${ci.length} check-in${ci.length === 1 ? "" : "s"}${xs.length ? `, ${xs.length} day${xs.length === 1 ? "" : "s"} of cardio and stretching` : ""}. Anything already entered here is kept.</span>
+      : `<span>Backup from ${esc((data.exportedAt || "").slice(0, 10) || "unknown date")}: ${newS} new session${newS === 1 ? "" : "s"}, ${filled} set${filled === 1 ? "" : "s"} to fill in, ${ci.length} check-in${ci.length === 1 ? "" : "s"}${xs.length ? `, ${xs.length} day${xs.length === 1 ? "" : "s"} of cardio and stretching` : ""}${ns.length ? `, ${ns.length} workout note${ns.length === 1 ? "" : "s"}` : ""}. Anything already entered here is kept.</span>
          <button type="button" class="btn" id="restoreYes">Restore</button><button type="button" class="btn alt" id="restoreNo">Cancel</button>`;
     box.hidden = false; $("restorePanel").hidden = true;
   }
   async function applyRestore() {
     if (!pendingRestore || !store) return;
-    const {writes, ci, xs, profile: pr} = pendingRestore; pendingRestore = null; $("restoreConfirm").hidden = true;
+    const {writes, ci, xs, ns, profile: pr} = pendingRestore; pendingRestore = null; $("restoreConfirm").hidden = true;
     try {
       if (pr) { profile = pr; await store.save("profile", pr); }
       for (const [id, body] of writes) { sessions[id] = body; await store.save(id, body); }
       for (const [id, c] of ci) { const v = Object.assign({kind: "checkin"}, c); checkins[id] = v; await store.save(id, v); }
       for (const [id, x] of (xs || [])) { const v = Object.assign({kind: "extra"}, x); extras[id] = v; await store.save(id, v); }
+      for (const [id, n] of (ns || [])) { const v = Object.assign({kind: "note"}, n); notes[id] = v; await store.save(id, v); }
       renderAll(); saveMsg("Restored. Your history and \"Last time\" numbers are back.", "ok");
     } catch (e) { renderAll(); saveMsg("Restore stopped partway. Paste and restore again to finish.", "warn"); }
   }
@@ -1719,6 +1921,7 @@
   document.addEventListener("focusin", (e) => {
     const t = e.target;
     if (!t || !t.matches || !t.matches("input, textarea")) return;
+    if (t.closest && t.closest("#nbSheet")) return;
     document.body.classList.add("typing");
     setTimeout(() => { try { t.scrollIntoView({block: "center", behavior: "smooth"}); } catch (err) {} }, 250);
   });
@@ -1741,8 +1944,8 @@
   // ================= storage =================
   function localStore() {
     const K = "coach.v1";
-    try { const raw = JSON.parse(localStorage.getItem(K) || "{}"); profile = raw.profile || null; settings = raw.settings || settings; sessions = raw.sessions || {}; checkins = raw.checkins || {}; extras = raw.extras || {}; } catch (e) {}
-    const persist = () => { try { localStorage.setItem(K, JSON.stringify({profile, settings, sessions, checkins, extras})); } catch (e) {} };
+    try { const raw = JSON.parse(localStorage.getItem(K) || "{}"); profile = raw.profile || null; settings = raw.settings || settings; sessions = raw.sessions || {}; checkins = raw.checkins || {}; extras = raw.extras || {}; notes = raw.notes || {}; } catch (e) {}
+    const persist = () => { try { localStorage.setItem(K, JSON.stringify({profile, settings, sessions, checkins, extras, notes})); } catch (e) {} };
     return {label: STANDALONE ? "Saved on this phone" : "Saved on this device only", cls: STANDALONE ? "ok" : "warn", save: async () => persist(), saveTimer: async () => {}};
   }
   async function init() {
@@ -1754,7 +1957,7 @@
     store = {label: "Saved", cls: "ok", save: (id, v) => col.doc(id).set(v), saveTimer: (t) => col.doc("timer").set(t)};
     let first = true;
     col.onSnapshot((snap) => {
-      const next = {}, nextCi = {}, nextX = {}; let timerDoc = null, prof = null;
+      const next = {}, nextCi = {}, nextX = {}, nextN = {}; let timerDoc = null, prof = null;
       snap.docs.forEach(d => {
         const v = d.data(); if (!v) return;
         if (d.id === "timer") timerDoc = v;
@@ -1763,6 +1966,7 @@
         else if (v.kind === "session") next[d.id] = v;
         else if (v.kind === "checkin") nextCi[d.id] = v;
         else if (v.kind === "extra") nextX[d.id] = v;
+        else if (v.kind === "note") nextN[d.id] = v;
       });
       if (pendingId && sessions[pendingId]) next[pendingId] = sessions[pendingId];
       sessions = next;
@@ -1771,6 +1975,8 @@
       checkins = nextCi;
       for (const [id, x] of Object.entries(extras)) if (x && (!nextX[id] || (nextX[id].savedAt || 0) < (x.savedAt || 0))) nextX[id] = x;
       extras = nextX;
+      for (const [id, n] of Object.entries(notes)) if (n && (!nextN[id] || (nextN[id].savedAt || 0) < (n.savedAt || 0))) nextN[id] = n;
+      notes = nextN;
       if (prof && (!profile || (prof.updatedAt || 0) >= (profile.updatedAt || 0))) profile = prof;
       const active = document.activeElement, typing = active && active.dataset && (active.dataset.f || active.dataset.x);
       let resumed = false;
@@ -1783,10 +1989,92 @@
       if (first) { first = false; renderTimer(); setStatus(resumed ? "Picked up where you left off. Your clock kept running." : Object.keys(sessions).length ? "Saved" : "Ready. Your sets save as you type.", "ok"); }
     }, () => setStatus("Lost connection. Reload to reconnect.", "warn"));
   }
+
+  // ================= workout note bubble UI =================
+  let nbDraft = ""; try { nbDraft = localStorage.getItem("coach.noteDraft") || ""; } catch (e) {}
+  const sessionNotes = () => curView ? Object.entries(notes).filter(([, n]) => n && n.sid === curView.id).sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0)) : [];
+  function describeChange(c) {
+    const sc = c.scope === "always" ? " (from now on)" : "";
+    switch (c.type) {
+      case "swap": return `${c.ex} → ${c.to}${c.sets ? `, ${c.sets} sets` : ""}${c.reps ? ` of ${c.reps}` : ""}${sc}`;
+      case "sets": return `${c.ex}: ${c.sets} sets${sc}`;
+      case "reps": return `${c.ex}: ${c.reps} reps${sc}`;
+      case "rest": return `${c.ex}: rest ${restTxt(c.rest)}${sc}`;
+      case "weight": return c.w != null ? `${c.ex}: ${c.w} lb today` : `${c.ex}: about ${Math.round(100 - c.pct * 100)}% lighter today`;
+      case "cue": return `${c.ex}: reminder “${c.cue}”`;
+      case "skip": return `Skip ${c.ex}${sc}`;
+      case "add": return `Add ${c.to}: ${c.sets || 3} sets of ${c.reps || "10"}${sc}`;
+    }
+    return "";
+  }
+  function renderNotes() {
+    const bub = $("nbBubble"); if (!bub) return;
+    bub.hidden = !profile || editingProfile || !curView;
+    const list = sessionNotes(), cnt = $("nbCount");
+    cnt.hidden = !list.length; cnt.textContent = list.length;
+    $("nbListLabel").textContent = curView ? `Notes for ${curView.sp.title}` : "Notes for this session";
+    $("nbList").innerHTML = list.length ? list.map(([id, n]) => {
+      const tag = n.status === "applied" ? `<span class="nb-tag applied">Changed your workout</span>` : n.status === "undone" ? `<span class="nb-tag">Undone</span>` : `<span class="nb-tag">Saved</span>`;
+      const ch = (n.changes || []).length ? `<ul>${n.changes.map(c => `<li>${esc(describeChange(c))}</li>`).join("")}</ul>` : "";
+      return `<li class="nb-item${n.status === "undone" ? " undone" : ""}">${tag}<q>${esc(n.text)}</q><span class="nb-meta">${esc(n.time || "")}${n.reply ? " · " + esc(n.reply) : ""}</span>${ch}
+        ${n.status === "applied" ? `<button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>` : n.status === "undone" ? `<button type="button" class="ghost" data-nbredo="${esc(id)}">Put them back</button>` : ""}</li>`;
+    }).join("") : `<li class="nb-meta">No notes yet for this session.</li>`;
+  }
+  function openNotes() {
+    $("nbSheet").hidden = false; document.body.classList.add("nb-open"); $("nbBubble").setAttribute("aria-expanded", "true");
+    const ta = $("nbText"); if (!ta.value && nbDraft) ta.value = nbDraft;
+    renderNotes(); setTimeout(() => { try { ta.focus({preventScroll: true}); } catch (e) { ta.focus(); } }, 50);
+  }
+  function closeNotes() { $("nbSheet").hidden = true; document.body.classList.remove("nb-open"); $("nbBubble").setAttribute("aria-expanded", "false"); try { $("nbText").blur(); } catch (e) {} }
+  function nbShow(cls, html) {
+    const r = $("nbResult"); r.className = "nb-result" + (cls ? " " + cls : ""); r.innerHTML = html; r.hidden = !html;
+    if (html) setTimeout(() => { try { r.scrollIntoView({block: "nearest", behavior: "smooth"}); } catch (e) {} }, 60);
+  }
+  function nowTime() { const d = new Date(); let h = d.getHours(); const m = String(d.getMinutes()).padStart(2, "0"), ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}:${m} ${ap}`; }
+  async function saveNoteDoc(id, n) {
+    n.savedAt = Date.now(); notes[id] = n; renderNotes();
+    try { if (store) await store.save(id, n); } catch (e) { nbShow("stop", "<p>Couldn't save the note. Tap again.</p>"); }
+  }
+  const newNote = (text) => ({kind: "note", date: today(), time: nowTime(), cycle: settings.cycle, week, day: curView.sp.key, sid: curView.id, text, status: "saved", changes: [], reply: "", savedAt: Date.now()});
+  function clearDraft() { $("nbText").value = ""; nbDraft = ""; try { localStorage.removeItem("coach.noteDraft"); } catch (e) {} }
+  async function applyNote(apply) {
+    const text = $("nbText").value.trim().slice(0, 500);
+    if (!text) { nbShow("", "<p>Type or say what you want to change first.</p>"); $("nbText").focus(); return; }
+    if (!curView) return;
+    await flushNow();
+    const id = "note-" + Date.now(), n = newNote(text), res = parseNote(text, curView);
+    if (res.stop) { n.reply = "Safety stop"; await saveNoteDoc(id, n); clearDraft(); nbShow("stop", `<p>${esc(STOP_MSG)}</p>`); return; }
+    if (!apply) { await saveNoteDoc(id, n); clearDraft(); nbShow("ok", "<p>Saved. Nothing in the workout changed.</p>"); return; }
+    n.changes = res.changes; n.status = res.changes.length ? "applied" : "saved";
+    n.reply = res.changes.length ? (res.misses.length ? "Part of it changed" : "Done") : "Saved as a note";
+    await saveNoteDoc(id, n); clearDraft();
+    if (res.changes.length) renderAll();
+    const nf = [...new Set(res.notFound)].filter(Boolean);
+    const miss = (nf.length ? `<p>I couldn't find <b>${nf.map(esc).join("</b>, <b>")}</b> in this session. Use a word from the exercise name on the card.</p>` : "") + (res.misses.length ? `<p>I didn't understand: <b>${res.misses.map(esc).join("”, “")}</b>. Open “What I understand” below for the wording I know.</p>` : "");
+    nbShow(res.changes.length ? "ok" : "miss", res.changes.length
+      ? `<ul>${res.changes.map(c => `<li>${esc(describeChange(c))}</li>`).join("")}</ul>${miss}<p>Your workout is already updated. Tap Minimize and keep going.</p><button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>`
+      : `<p>Saved as a note, but nothing in the workout changed.</p>${miss}`);
+  }
+  async function setNoteStatus(id, status) {
+    const n = notes[id]; if (!n) return;
+    await saveNoteDoc(id, Object.assign({}, n, {status})); renderAll();
+    nbShow("ok", status === "undone" ? "<p>Undone. Your workout is back the way it was.</p>" : "<p>Changes put back.</p>");
+  }
+  $("nbBubble").addEventListener("click", openNotes);
+  $("nbMin").addEventListener("click", closeNotes);
+  $("nbApply").addEventListener("click", () => applyNote(true));
+  $("nbSave").addEventListener("click", () => applyNote(false));
+  $("nbText").addEventListener("input", (e) => { nbDraft = e.target.value; try { localStorage.setItem("coach.noteDraft", nbDraft); } catch (err) {} });
+  $("nbSheet").addEventListener("click", (e) => {
+    const t = e.target.closest("button"); if (!t) return;
+    if (t.dataset.nbundo) setNoteStatus(t.dataset.nbundo, "undone");
+    if (t.dataset.nbredo) setNoteStatus(t.dataset.nbredo, "applied");
+  });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("nbSheet").hidden) closeNotes(); });
   if (globalThis.__COACH_TEST__) {   // test hook only; never set on the published page
     globalThis.__coach = {setProfile: (p) => { profile = p; }, setCheckin: (c) => { checkins[ciId(today())] = c; }, plan, buildSession, budget, level, scoreCheckin, cardioKind,
       setSessions: (x) => { sessions = x; }, targetFor, liftsFor, judge, incFor,
-      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard};
+      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard, parseNote, normalize};
     return;
   }
   init();
