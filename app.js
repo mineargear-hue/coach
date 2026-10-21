@@ -36,6 +36,7 @@
   // ================= exercise library =================
   // [name, pattern, equipment (g gym, d dumbbells, b bands, w bodyweight), min level (0 new, 1 some, 2 experienced),
   //  joint stress {k knee, b back, s shoulder: 0-2}, flags (bw bodyweight, side per side, timed, stretch, power)]
+  const LIB_ADDED_AT = 53;   // entries from here on were added in 1.8.0
   const LIB = [
     ["Barbell back squat", "squat", "g", 1, {k: 2, b: 1}, "stretch"],
     ["Goblet squat", "squat", "gd", 0, {k: 2}, "stretch"],
@@ -89,8 +90,66 @@
     ["Reverse crunch", "core", "w", 1, {b: 1}, "bw"],
     ["Hanging knee raise", "core", "g", 1, {s: 1}, "bw"],
     ["Farmer carry", "carry", "gd", 0, {b: 1}, ""],
-    ["Suitcase carry", "carry", "gd", 0, {}, "side"]
-  ].map(([name, pat, eq, lvl, j, fl]) => ({name, pat, eq, lvl, j, bw: /\bbw\b/.test(fl), side: /\bside\b/.test(fl), timed: /\btimed\b/.test(fl), stretch: /\bstretch\b/.test(fl), power: /\bpower\b/.test(fl)}));
+    ["Suitcase carry", "carry", "gd", 0, {}, "side"],
+    // ---- added 1.8.0: fill thin spots (home, bands, bodyweight, sore knees and shoulders) ----
+    ["Dumbbell squat", "squat", "d", 0, {k: 2}, ""],
+    ["Dumbbell box squat", "squat", "gd", 0, {k: 1}, ""],
+    ["Banded box squat", "squat", "b", 0, {k: 1}, ""],
+    ["Wall sit", "squat", "w", 0, {k: 1}, "bw timed"],
+    ["Hack squat", "squat", "g", 1, {k: 2}, ""],
+    ["Smith machine squat", "squat", "g", 1, {k: 2, b: 1}, ""],
+    ["Barbell Romanian deadlift", "hinge", "g", 1, {b: 1}, "stretch"],
+    ["Kettlebell deadlift", "hinge", "g", 0, {b: 1}, ""],
+    ["Back extension", "hinge", "g", 0, {b: 1}, ""],
+    ["Seated leg curl", "hinge", "g", 0, {k: 1}, "acc"],
+    ["Dumbbell hip thrust", "hinge", "d", 0, {}, ""],
+    ["Single-leg Romanian deadlift", "hinge", "gd", 1, {}, "side stretch"],
+    ["Band pull-through", "hinge", "b", 0, {}, ""],
+    ["Banded glute bridge", "hinge", "b", 0, {}, ""],
+    ["Bodyweight good morning", "hinge", "w", 0, {b: 1}, "bw"],
+    ["Bodyweight single-leg deadlift", "hinge", "w", 1, {}, "bw side"],
+    ["Low step-up", "lunge", "w", 0, {k: 1}, "bw side"],
+    ["Bodyweight step-up", "lunge", "w", 0, {k: 2}, "bw side"],
+    ["Bodyweight split squat", "lunge", "w", 0, {k: 2}, "bw side stretch"],
+    ["Lateral lunge", "lunge", "gd", 1, {k: 2}, "side stretch"],
+    ["Bodyweight lateral lunge", "lunge", "w", 1, {k: 2}, "bw side stretch"],
+    ["Band split squat", "lunge", "b", 0, {k: 2}, "side"],
+    ["Incline dumbbell press", "hpush", "gd", 0, {s: 1}, "stretch"],
+    ["Cable chest press", "hpush", "g", 0, {s: 1}, ""],
+    ["Cable fly", "hpush", "g", 0, {s: 1}, "acc stretch"],
+    ["Dumbbell squeeze press", "hpush", "d", 0, {s: 1}, ""],
+    ["Band chest fly", "hpush", "b", 0, {s: 1}, "acc"],
+    ["Kneeling push-up", "hpush", "w", 0, {s: 1}, "bw"],
+    ["Wall push-up", "hpush", "w", 0, {s: 1}, "bw"],
+    ["Machine shoulder press", "vpush", "g", 0, {s: 2}, ""],
+    ["Arnold press", "vpush", "gd", 1, {s: 2}, ""],
+    ["Dumbbell lateral raise", "vpush", "gd", 0, {s: 1}, "acc"],
+    ["Cable lateral raise", "vpush", "g", 0, {s: 1}, "acc side"],
+    ["Band lateral raise", "vpush", "b", 0, {s: 1}, "acc"],
+    ["Incline pike push-up", "vpush", "w", 1, {s: 2}, "bw"],
+    ["Prone W raise", "vpush", "w", 0, {}, "bw acc"],
+    ["Machine row", "hpull", "g", 0, {}, ""],
+    ["Inverted row", "hpull", "g", 1, {s: 1}, "bw"],
+    ["Dumbbell bent-over row", "hpull", "gd", 1, {b: 2}, ""],
+    ["Face pull", "hpull", "g", 0, {}, "acc"],
+    ["Band face pull", "hpull", "b", 0, {}, "acc"],
+    ["Band pull-apart", "hpull", "b", 0, {}, "acc"],
+    ["Dumbbell rear delt fly", "hpull", "gd", 0, {b: 1}, "acc"],
+    ["Doorframe row", "hpull", "w", 0, {s: 1}, "bw"],
+    ["Prone cobra hold", "hpull", "w", 0, {}, "bw timed"],
+    ["Close-grip lat pulldown", "vpull", "g", 0, {s: 1}, ""],
+    ["Straight-arm cable pulldown", "vpull", "g", 0, {s: 1}, "acc stretch"],
+    ["Single-arm band pulldown", "vpull", "b", 0, {s: 1}, "side"],
+    ["Incline plank", "core", "w", 0, {}, "bw timed"],
+    ["Kneeling side plank", "core", "w", 0, {}, "bw timed side"],
+    ["Bear hold", "core", "w", 0, {k: 1}, "bw timed"],
+    ["Hollow hold", "core", "w", 1, {b: 1}, "bw timed"],
+    ["Cable woodchop", "core", "g", 0, {}, "side"],
+    ["Band woodchop", "core", "b", 0, {}, "side"],
+    ["Ab wheel rollout", "core", "g", 2, {b: 1, s: 1}, "bw"],
+    ["Front-rack carry", "carry", "gd", 1, {}, ""],
+    ["Overhead carry", "carry", "gd", 2, {s: 2}, "side"]
+  ].map(([name, pat, eq, lvl, j, fl], i) => ({name, pat, eq, lvl, j, bw: /\bbw\b/.test(fl), side: /\bside\b/.test(fl), timed: /\btimed\b/.test(fl), stretch: /\bstretch\b/.test(fl), power: /\bpower\b/.test(fl), acc: /\bacc\b/.test(fl), added: i >= LIB_ADDED_AT ? 1 : 0}));
   const BYNAME = Object.fromEntries(LIB.map(x => [x.name, x]));
   const BODYWEIGHT = new Set(LIB.filter(x => x.bw).map(x => x.name));
   const STRETCH = new Set(LIB.filter(x => x.stretch).map(x => x.name));
@@ -98,7 +157,12 @@
   const FIXED_REPS = {"Plank": ["30 sec", "45 sec"], "Side plank": ["20 sec per side", "30 sec per side"], "Dead bug": ["8 per side", "10 per side"],
     "Bird dog": ["8 per side", "10 per side"], "Pallof press": ["10 per side", "10 per side"], "Farmer carry": ["40 yd", "50 yd"],
     "Suitcase carry": ["40 yd per side", "40 yd per side"], "Clean and press": ["5", "5"], "Prone Y-T raise": ["10", "12"],
-    "Superman lat pull": ["10", "12"], "Reverse snow angel": ["10", "12"], "Sit-to-stand from a chair": ["10", "12"]};
+    "Superman lat pull": ["10", "12"], "Reverse snow angel": ["10", "12"], "Sit-to-stand from a chair": ["10", "12"],
+    "Wall sit": ["20 sec", "30 sec"], "Prone cobra hold": ["20 sec", "30 sec"], "Incline plank": ["20 sec", "30 sec"],
+    "Kneeling side plank": ["15 sec per side", "20 sec per side"], "Bear hold": ["15 sec", "20 sec"], "Hollow hold": ["15 sec", "20 sec"],
+    "Prone W raise": ["10", "12"], "Band pull-apart": ["15", "15"], "Face pull": ["12", "15"], "Band face pull": ["12", "15"],
+    "Cable woodchop": ["10 per side", "10 per side"], "Band woodchop": ["10 per side", "10 per side"], "Ab wheel rollout": ["6", "8"],
+    "Front-rack carry": ["40 yd", "40 yd"], "Overhead carry": ["30 yd per side", "30 yd per side"]};
   const VIDEO_Q = {"Clean and press": "barbell clean and press technique", "Sit-to-stand from a chair": "sit to stand exercise seniors",
     "Prone Y-T raise": "prone y t raise exercise", "Superman lat pull": "superman lat pull exercise", "Reverse snow angel": "reverse snow angel exercise",
     "Cable pull-through": "cable pull through glutes form", "Fat-burn finisher": "stationary bike intervals beginners",
@@ -107,7 +171,10 @@
     "Kneeling lat stretch": "kneeling lat stretch bench", "Wall slides": "wall slides shoulder mobility", "Cat-cow": "cat cow stretch",
     "Hamstring stretch": "standing hamstring stretch", "Lying hamstring stretch with a strap": "lying hamstring stretch strap",
     "Figure-4 glute stretch": "figure 4 glute stretch", "Standing hip flexor stretch": "standing hip flexor stretch",
-    "Single-leg balance": "single leg balance exercise older adults", "Child's pose": "child's pose stretch", "Open-book stretch": "open book stretch"};
+    "Single-leg balance": "single leg balance exercise older adults", "Doorframe row": "doorframe row exercise at home", "Prone cobra hold": "prone cobra exercise back",
+    "Low step-up": "low step up exercise knee friendly", "Wall push-up": "wall push up for beginners", "Kneeling side plank": "kneeling side plank",
+    "Incline plank": "incline plank on bench", "Bear hold": "bear plank hold", "Band pull-apart": "band pull apart form", "Prone W raise": "prone w raise exercise",
+    "Dumbbell box squat": "dumbbell box squat", "Banded box squat": "band squat to box", "Bodyweight good morning": "bodyweight good morning hip hinge", "Child's pose": "child's pose stretch", "Open-book stretch": "open book stretch"};
   const videoUrl = (name) => "https://www.youtube.com/results?search_query=" + encodeURIComponent(VIDEO_Q[name] || (name + " proper form"));
   const watchBtn = (name, label) => `<a class="watch" href="${videoUrl(name)}" target="_blank" rel="noopener noreferrer"><span class="play" aria-hidden="true">▶</span>${esc(label || "Watch how")}</a>`;
   function stretchChips(text) {
@@ -177,9 +244,11 @@
     const ok = list.filter(x => pj.every(j => (x.j[j] || 0) < 2));
     if (ok.length || o.strict) list = ok;
     if (o.limit) { const okj = list.filter(x => Object.entries(o.limit).every(([j, max]) => (x.j[j] || 0) <= max)); list = okj; }
-    if (ageNum() >= 65) { const gentler = list.filter(x => !/pike|hanging|^pull-up$/i.test(x.name)); if (gentler.length) list = gentler; }
+    if (ageNum() >= 65) { const gentler = list.filter(x => !/pike|hanging|^pull-up$|ab wheel|overhead carry/i.test(x.name)); if (gentler.length) list = gentler; }
     // Best equipment they have first (gym, then dumbbells, then bands, then bodyweight), then closest to their level.
-    return list.slice().sort((a, b) => (eqRank(a) - eqRank(b)) || (b.lvl - a.lvl) || (LIB.indexOf(a) - LIB.indexOf(b)));
+    // Moves added in 1.8.0 rank behind the original ones in the same equipment group, so existing plans keep their
+    // main lifts and progression; the new moves come in through rotation, swap ideas and joint-friendly substitutes.
+    return list.slice().sort((a, b) => (eqRank(a) - eqRank(b)) || (a.added - b.added) || (b.lvl - a.lvl) || (LIB.indexOf(a) - LIB.indexOf(b)));
   }
   function eqRank(x) {
     const eq = eqSet();
@@ -212,7 +281,7 @@
     const used = new Set(), seen = {}, sessIdx = plan().findIndex(s => s.key === sp.key);
     // count how many times each pattern appeared in earlier sessions this week, for variety
     plan().slice(0, Math.max(0, sessIdx)).forEach(s => s.slots.forEach(p => { seen[p] = (seen[p] || 0) + 1; }));
-    return sp.slots.map((pat, i) => {
+    const out = sp.slots.map((pat, i) => {
       // An ongoing joint problem that rules out a whole movement (every lunge loads the knee) moves to a related one.
       let c = [];
       for (const pt of [pat, ...(RELATED[pat] || [])]) { c = candidates(pt, {strict: true}).filter(x => !used.has(x.name)); if (c.length) break; }
@@ -220,6 +289,8 @@
       if (!c.length) return null;
       const occ = (seen[pat] || 0) + (w === 2 && i > 0 ? 1 : 0);
       seen[pat] = (seen[pat] || 0) + 1;
+      // Accessory-only moves (lateral raises, face pulls…) never become the session's main lift.
+      if (i === 0 && pat !== "core") { const big = c.filter(x => !x.acc); if (big.length) c = big; }
       let x = pickVaried(c, occ), stepFrom = null;
       const easy = stepDown(x, c, w, sp);
       if (easy) { stepFrom = x.name; x = easy; }
@@ -227,6 +298,26 @@
       const main = i === 0 && pat !== "core";
       return {name: x.name, pat, sets: setsFor(main, w), reps: repsFor(x.name, main, w), base: restFor(x, main), main, side: x.side, lib: x, stepFrom};
     }).filter(Boolean);
+    return pinLogged(out, w, sp);
+  }
+  // A session that already has sets keeps the exercises they were logged under, even if the library or the
+  // setup answers changed since (1.8.0). Without this, logged sets could drop out of view. Nothing is moved or lost.
+  function pinLogged(items, w, sp) {
+    const body = sessions[sid(settings.cycle, w, sp.key)];
+    if (!body || !body.sets) return items;
+    const logged = Object.keys(body.sets).filter(n => BYNAME[n] && setsOf(body, n).some(x => x && (x.r != null || x.w != null || x.done)));
+    if (!logged.length) return items;
+    const picked = new Set(items.map(it => it.name));
+    const spare = logged.filter(n => !picked.has(n));
+    items.forEach(it => {
+      if (logged.includes(it.name) || !spare.length) return;
+      const k = spare.findIndex(n => BYNAME[n].pat === it.pat) >= 0 ? spare.findIndex(n => BYNAME[n].pat === it.pat)
+        : spare.findIndex(n => (RELATED[it.pat] || []).includes(BYNAME[n].pat));
+      if (k < 0) return;
+      const L = BYNAME[spare.splice(k, 1)[0]];
+      Object.assign(it, {name: L.name, side: L.side, lib: L, stepFrom: null, reps: repsFor(L.name, it.main, w), base: restFor(L, it.main), pinned: true});
+    });
+    return items;
   }
   // A bodyweight move missed in two sessions in a row steps back to an easier move of the same kind
   // (push-up → incline push-up) until the easier one is done cleanly twice. A session already started keeps its move.
@@ -2020,7 +2111,7 @@
 
   // ================= workout note bubble UI =================
   let nbDraft = ""; try { nbDraft = localStorage.getItem("coach.noteDraft") || ""; } catch (e) {}
-  const sessionNotes = () => curView ? Object.entries(notes).filter(([, n]) => n && n.sid === curView.id).sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0)) : [];
+  const sessionNotes = () => curView ? Object.entries(notes).filter(([, n]) => n && n.sid === curView.id && n.status !== "deleted").sort((a, b) => (b[1].savedAt || 0) - (a[1].savedAt || 0)) : [];
   function describeChange(c) {
     const sc = c.scope === "always" ? " (from now on)" : "";
     switch (c.type) {
@@ -2045,7 +2136,7 @@
       const tag = n.status === "applied" ? `<span class="nb-tag applied">Changed your workout</span>` : n.status === "undone" ? `<span class="nb-tag">Undone</span>` : `<span class="nb-tag">Saved</span>`;
       const ch = (n.changes || []).length ? `<ul>${n.changes.map(c => `<li>${esc(describeChange(c))}</li>`).join("")}</ul>` : "";
       return `<li class="nb-item${n.status === "undone" ? " undone" : ""}">${tag}<q>${esc(n.text)}</q><span class="nb-meta">${esc(n.time || "")}${n.reply ? " · " + esc(n.reply) : ""}</span>${ch}
-        ${n.status === "applied" ? `<button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>` : n.status === "undone" ? `<button type="button" class="ghost" data-nbredo="${esc(id)}">Put them back</button>` : ""}</li>`;
+        <div class="nb-acts">${n.status === "applied" ? `<button type="button" class="ghost" data-nbundo="${esc(id)}">Undo these changes</button>` : n.status === "undone" ? `<button type="button" class="ghost" data-nbredo="${esc(id)}">Put them back</button>` : ""}<button type="button" class="ghost nb-del" data-nbdel="${esc(id)}">Delete note</button></div></li>`;
     }).join("") : `<li class="nb-meta">No notes yet for this session.</li>`;
     if (!$("nbSheet").hidden) renderNoteIdeas();
   }
@@ -2108,6 +2199,29 @@
     await saveNoteDoc(id, Object.assign({}, n, {status})); renderAll();
     nbShow("ok", status === "undone" ? "<p>Undone. Your workout is back the way it was.</p>" : "<p>Changes put back.</p>");
   }
+  // Delete (1.7.1): two taps, then Undo. The note is marked deleted, not erased, so a backup restore can't bring it
+  // back and its workout changes stop at once (noteChangesFor only uses "applied" notes).
+  let nbDelArm = null;
+  async function deleteNote(id, btn) {
+    const n = notes[id]; if (!n) return;
+    if (nbDelArm !== id) {
+      nbDelArm = id; btn.textContent = "Tap again to delete"; btn.classList.add("arm");
+      setTimeout(() => { if (nbDelArm === id) { nbDelArm = null; if (btn.isConnected) { btn.textContent = "Delete note"; btn.classList.remove("arm"); } } }, 4000);
+      return;
+    }
+    nbDelArm = null;
+    const hadChanges = n.status === "applied";
+    await saveNoteDoc(id, Object.assign({}, n, {status: "deleted", statusBefore: n.status, deletedAt: Date.now()}));
+    if (hadChanges) renderAll();
+    nbShow("ok", `<p>Note deleted.${hadChanges ? " Its workout changes are gone too." : ""}</p><button type="button" class="ghost" data-nbback="${esc(id)}">Undo</button>`);
+  }
+  async function undeleteNote(id) {
+    const n = notes[id]; if (!n || n.status !== "deleted") return;
+    const back = n.statusBefore || "saved";
+    await saveNoteDoc(id, Object.assign({}, n, {status: back, deletedAt: null}));
+    if (back === "applied") renderAll();
+    nbShow("ok", "<p>Note is back.</p>");
+  }
   $("nbBubble").addEventListener("click", openNotes);
   $("nbMin").addEventListener("click", closeNotes);
   $("nbApply").addEventListener("click", () => applyNote(true));
@@ -2117,13 +2231,15 @@
     const t = e.target.closest("button"); if (!t) return;
     if (t.dataset.nbundo) setNoteStatus(t.dataset.nbundo, "undone");
     if (t.dataset.nbredo) setNoteStatus(t.dataset.nbredo, "applied");
+    if (t.dataset.nbdel) deleteNote(t.dataset.nbdel, t);
+    if (t.dataset.nbback) undeleteNote(t.dataset.nbback);
     if (t.dataset.nbto) { $("nbText").value = `swap ${t.dataset.nbex} for ${t.dataset.nbto}`; applyNote(true); }
   });
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("nbSheet").hidden) closeNotes(); });
   if (globalThis.__COACH_TEST__) {   // test hook only; never set on the published page
     globalThis.__coach = {setProfile: (p) => { profile = p; }, setCheckin: (c) => { checkins[ciId(today())] = c; }, plan, buildSession, budget, level, scoreCheckin, cardioKind,
       setSessions: (x) => { sessions = x; }, targetFor, liftsFor, judge, incFor,
-      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard, parseNote, normalize, swapOptions, AREA};
+      setCheckins: (x) => { checkins = x; }, weeksInARow, cardFacts, winsFor, drawCard, parseNote, normalize, swapOptions, AREA, candidates, LIB};
     return;
   }
   init();
